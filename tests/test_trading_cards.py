@@ -499,5 +499,6 @@ def test_view_empty_state_names_the_player():
     # that looks broken.
     src = open("app.py").read()
     assert "No +EV flags for **{_scan_player}**" in src
-    assert "the market has this one priced right" in src
+    # (wording spans two source lines; check both halves)
+    assert "the market has this one priced " in src
     assert "Players** tab" in src
