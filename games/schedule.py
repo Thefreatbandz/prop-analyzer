@@ -21,8 +21,23 @@ try:
 except ImportError:  # very old Pythons; the app targets 3.11+
     ZoneInfo = None
 
+
+def _eastern():
+    # Learn-mode: some minimal server images (like Streamlit Cloud's)
+    # ship WITHOUT the tz database, so ZoneInfo("America/New_York")
+    # raises ZoneInfoNotFoundError at import time — and an import-time
+    # crash takes down the whole app ("Oh no. Error running app").
+    # Never let a missing tz database break startup: UTC fallback.
+    if ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo("America/New_York")
+    except Exception:
+        return timezone.utc
+
+
 # Display timezone for kickoff times and the "today" badge.
-ET = ZoneInfo("America/New_York") if ZoneInfo else timezone.utc
+ET = _eastern()
 
 from teams.colors import NAME_TO_ABBR
 

@@ -227,3 +227,34 @@ def test_view_flow_renders_spotlight_without_picks(monkeypatch):
     # The honest no-flags note renders via st.info (branded banner).
     info = " ".join(str(getattr(i, "value", "")) for i in at.info)
     assert "priced right" in info, "honest no-flags note missing"
+
+
+def test_schedule_import_without_tzdata():
+    # Learn-mode: Streamlit Cloud's image once shipped without the tz
+    # database, so ZoneInfo("America/New_York") raised at import time
+    # and the whole app died on startup ("Oh no. Error running app").
+    # Importing games.schedule must NEVER raise, with or without tzdata.
+    import zoneinfo
+
+    class _NoTzdata:
+        def __init__(self, *a, **k):
+            raise zoneinfo.ZoneInfoNotFoundError("no tzdata here")
+
+    import sys
+
+    for m in [m for m in sys.modules if m == "games.schedule" or m.startswith("games.schedule.")]:
+        del sys.modules[m]
+    real = zoneinfo.ZoneInfo
+    zoneinfo.ZoneInfo = _NoTzdata
+    try:
+        import games.schedule as g2
+
+        assert g2.ET is not None
+        evs = g2.parse_events([{"name": "Tampa Bay Buccaneers at Dallas Cowboys",
+                                "starts_at": "2026-10-09T00:15:00Z"}])
+        assert evs and evs[0]["away"] == "Tampa Bay Buccaneers"
+        assert evs[0]["home"] == "Dallas Cowboys"
+    finally:
+        zoneinfo.ZoneInfo = real
+        for m in [m for m in sys.modules if m == "games.schedule" or m.startswith("games.schedule.")]:
+            del sys.modules[m]
