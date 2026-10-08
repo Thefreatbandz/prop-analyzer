@@ -128,9 +128,9 @@ def test_suggestion_card_unknown_team_no_accent():
 
 
 def test_scan_uses_mini_cards():
-    # v6.1: the strip renders through the never-raises safe wrapper so one
+    # v6.1+: the strip renders through the never-raises safe wrapper so one
     # bad suggestion can't blank the Scan tab (live AttributeError 2026-10-08).
-    assert "ui_cards.suggestion_card_safe(" in SRC
+    assert "suggestion_card_safe" in SRC
     assert "Worth a look this week" in SRC
 
 
@@ -183,4 +183,8 @@ def test_team_accent_rejects_non_string_team():
 
 
 def test_scan_strip_uses_safe_renderer():
-    assert "ui_cards.suggestion_card_safe(" in SRC
+    # v6.2: the renderer is resolved defensively — a partially-updated deploy
+    # serving a new app.py against an older ui/cards.py must skip the cards,
+    # not AttributeError at the call site (live 2026-10-08, v6.1 deployed).
+    assert 'getattr(ui_cards, "suggestion_card_safe", None)' in SRC
+    assert "ui_cards.suggestion_card_html(" not in SRC

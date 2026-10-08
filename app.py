@@ -619,12 +619,18 @@ with tab_scan:
         _rosters = _rosters_df()
         _scols = st.columns(min(len(_sugs), 4))
         _rendered = 0
+        # Resolve the renderer defensively: a partially-updated deploy can
+        # serve a new app.py against an older ui/cards.py that lacks the
+        # safe renderer (live 2026-10-08: AttributeError at this exact call
+        # after v6.1 shipped the fix). Missing renderer or any render
+        # failure => skip the card, never break the Scan tab.
+        _safe_card = getattr(ui_cards, "suggestion_card_safe", None)
         for _i, _s in enumerate(_sugs[:4]):
             with _scols[_i % 4]:
-                # suggestion_card_safe never raises: one bad suggestion is a
-                # skipped card, never a broken Scan tab (live 2026-10-08: an
-                # AttributeError here blanked the whole home view).
-                _card = ui_cards.suggestion_card_safe(_s, _rosters)
+                try:
+                    _card = _safe_card(_s, _rosters) if _safe_card else None
+                except Exception:
+                    _card = None
                 if _card is None:
                     continue
                 st.markdown(_card, unsafe_allow_html=True)
