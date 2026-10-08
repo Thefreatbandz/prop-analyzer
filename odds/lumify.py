@@ -38,11 +38,18 @@ def load_sample() -> dict:
         return json.load(f)
 
 
-def list_events() -> list[dict]:
-    """Upcoming NFL events (cheap: 1 credit). Each has an id for props pulls."""
+def list_events(status: str = "scheduled") -> list[dict]:
+    """NFL events (cheap: 1 credit). Each has an id for props pulls.
+
+    Defaults to status="scheduled" — without it the endpoint returns the most
+    recent finals, so an "upcoming games" call would find nothing to scan.
+    """
     if not _key():
         raise RuntimeError("LUMIFY_API_KEY is not set.")
-    r = requests.get(f"{BASE}/events", params={"sport": "nfl"}, headers=_headers(), timeout=30)
+    params = {"sport": "nfl"}
+    if status:
+        params["status"] = status
+    r = requests.get(f"{BASE}/events", params=params, headers=_headers(), timeout=30)
     r.raise_for_status()
     data = r.json()
     return data.get("events", data if isinstance(data, list) else [])
@@ -85,33 +92,97 @@ def get_player_props(event_id: str | None = None, force: bool = False) -> dict:
     return fetch_props(event_id, force=force)
 
 
+# Live Lumify market keys -> the canonical player_* keys our projection
+# model builds distributions for (see projections/model.py STAT_MAP).
+# Markets with no mapping (alt/combo lines like pass_rush_yards, anytime-TD
+# "touchdowns") keep their raw key and are skipped honestly by the engine —
+# never silently mis-mapped.
+LIVE_MARKET_MAP = {
+    "passing_yards": "player_pass_yds",
+    "passing_tds": "player_pass_tds",
+    "rushing_yards": "player_rush_yds",
+    "receiving_yards": "player_rec_yds",
+    "receptions": "player_receptions",
+    "rushing_tds": "player_rush_tds",
+    "receiving_tds": "player_rec_tds",
+}
+
+LIVE_MARKET_LABELS = {
+    "passing_yards": "Passing Yards",
+    "passing_tds": "Passing TDs",
+    "passing_attempts": "Pass Attempts",
+    "passing_completions": "Completions",
+    "rushing_yards": "Rushing Yards",
+    "receiving_yards": "Receiving Yards",
+    "receptions": "Receptions",
+    "rushing_tds": "Rushing TDs",
+    "receiving_tds": "Receiving TDs",
+    "touchdowns": "Touchdowns",
+    "pass_rush_yards": "Pass + Rush Yards",
+    "interceptions": "Interceptions",
+}
+
+
+def _norm_books_dict(raw_books: dict, line) -> list[dict]:
+    """Live Lumify shape: books is {"draftkings": {"over": -110, ...}}."""
+    books = []
+    for name, prices in raw_books.items():
+        if not isinstance(prices, dict):
+            continue
+        over = prices.get("over")
+        under = prices.get("under")
+        if over is None and under is None:
+            continue
+        books.append({"book": name, "line": line, "over": over, "under": under})
+    return books
+
+
+def _norm_books_list(raw_books: list) -> list[dict]:
+    """Sample/legacy shape: books is [{book, line, over, under}, ...]."""
+    books = []
+    for b in raw_books:
+        if not isinstance(b, dict):
+            continue
+        over = b.get("over") if b.get("over") is not None else b.get("over_price")
+        under = b.get("under") if b.get("under") is not None else b.get("under_price")
+        books.append(
+            {
+                "book": b.get("book") or b.get("bookmaker") or b.get("key"),
+                "line": b.get("line"),
+                "over": over,
+                "under": under,
+            }
+        )
+    return books
+
+
 def normalize(payload: dict) -> list[dict]:
     """Flatten to one row per player-market.
 
     Returns: [{player, team, market, label,
                books: [{book, line, over, under}]}]
-    Accepts both our sample shape and the Lumify API shape (best effort —
-    field names get mapped defensively since providers change schemas).
+    Accepts both our sample shape and the live Lumify API shape — the live
+    payload nests books as a dict keyed by book name with the line at the
+    prop level, and uses short market keys (passing_yards, ...) which are
+    mapped to the canonical player_* keys the model understands.
     """
     props = payload.get("props") or payload.get("player_props") or []
     out = []
     for p in props:
-        books = []
-        for b in p.get("books", []) or p.get("bookmakers", []):
-            books.append(
-                {
-                    "book": b.get("book") or b.get("bookmaker") or b.get("key"),
-                    "line": b.get("line"),
-                    "over": b.get("over") or b.get("over_price"),
-                    "under": b.get("under") or b.get("under_price"),
-                }
-            )
+        raw_books = p.get("books", [])
+        if isinstance(raw_books, dict):
+            books = _norm_books_dict(raw_books, p.get("line"))
+        else:
+            books = _norm_books_list(raw_books or p.get("bookmakers", []))
+        raw_market = p.get("market") or p.get("market_key")
+        market = LIVE_MARKET_MAP.get(raw_market, raw_market)
+        label = p.get("label") or LIVE_MARKET_LABELS.get(raw_market) or raw_market
         out.append(
             {
                 "player": p.get("player") or p.get("player_name"),
                 "team": p.get("team"),
-                "market": p.get("market") or p.get("market_key"),
-                "label": p.get("label") or p.get("market"),
+                "market": market,
+                "label": label,
                 "books": [b for b in books if b["line"] is not None],
             }
         )
