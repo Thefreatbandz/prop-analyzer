@@ -491,3 +491,13 @@ def test_dev_mode_gates_key_status():
     from odds import the_odds_api
     _, note = the_odds_api.get_moneylines_strict()
     assert "ODDS_API_KEY" not in (note or "")
+
+
+def test_view_empty_state_names_the_player():
+    # Tapping "View" on a suggestion with no +EV flags must say so
+    # plainly with the player's context — never the generic empty state
+    # that looks broken.
+    src = open("app.py").read()
+    assert "No +EV flags for **{_scan_player}**" in src
+    assert "the market has this one priced right" in src
+    assert "Players** tab" in src

@@ -606,6 +606,26 @@ with tab_scan:
             # Props board is empty because no games are posted — do NOT
             # claim "the market is sharp"; that would be dishonest.
             st.info(props_note)
+        elif _scan_player:
+            # "View" was tapped on a suggestion but this player has no +EV
+            # flags right now (usually a news-trending name with no
+            # mispriced props). Say so plainly with the player's context
+            # instead of the generic empty state that looks broken.
+            _bio = None
+            try:
+                from players import profiles as _prof
+                _bio = _prof.find_player(_rosters_df(), _scan_player)
+            except Exception:
+                _bio = None
+            _team_pos = ""
+            if _bio:
+                _team_pos = f" ({_bio.get('team', '')}" + \
+                    (f" · {_bio.get('position', '')}"
+                     if _bio.get('position') else "") + ")"
+            st.info(f"No +EV flags for **{_scan_player}**{_team_pos} at the "
+                    f"current threshold — the market has this one priced "
+                    f"right, so there's nothing to show. That's a result "
+                    f"too. Their full profile lives in the **Players** tab.")
         elif not all_picks and not _fades_mode:
             st.info("No +EV flags at the current threshold. The market is "
                     "sharp today — that's a result too.")
