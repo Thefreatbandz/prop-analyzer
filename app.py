@@ -115,11 +115,17 @@ st.markdown(
     h1, h2, h3 { letter-spacing: 0.02em; font-weight: 700; }
     [data-testid="stCaptionContainer"] { color: var(--ink-dim); }
 
-    .pick-card { border: 1px solid var(--line); border-radius: 12px;
+    .pick-card { border: 1px solid #33333a; border-radius: 12px;
                  padding: 14px 16px; margin-bottom: 12px;
-                 background: var(--panel);
-                 box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+                 background: linear-gradient(180deg, #18181c, var(--panel));
+                 box-shadow: 0 6px 26px rgba(0,0,0,.5),
+                             inset 0 1px 0 rgba(255,255,255,.05); }
     .pick-card b { color: var(--ink); }
+
+    /* Section headers: gold gradient underline bar */
+    h2::after, h3::after { content: ""; display: block; height: 2px;
+        width: 60px; margin-top: 8px; border-radius: 2px;
+        background: linear-gradient(90deg, var(--gold), transparent); }
     .ev-big { color: var(--gold); font-size: 1.45em; font-weight: 800;
               font-variant-numeric: tabular-nums; }
     .ev-neg { color: #C46A6A; }
@@ -127,14 +133,59 @@ st.markdown(
     .key-ok { color: #7BC47F; } .key-miss { color: #C46A6A; }
     .gold-label { color: var(--gold); font-weight: 600; }
 
-    /* Tabs: calmer, gold active underline */
-    button[data-baseweb="tab"] { font-weight: 600; color: var(--ink-dim); }
-    button[data-baseweb="tab"][aria-selected="true"] { color: var(--gold); }
+    /* ---- Floating tab nav: sticky pill bar on desktop, bottom bar on phone ---- */
+    [data-testid="stTabs"] [role="tablist"] {
+        position: sticky; top: 3.4rem; z-index: 90;
+        background: rgba(18,18,22,.93); backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid var(--line); border-radius: 999px;
+        padding: 6px 8px; gap: 2px;
+        box-shadow: 0 6px 24px rgba(0,0,0,.5);
+        overflow-x: auto; scrollbar-width: none;
+    }
+    [data-testid="stTabs"] [role="tablist"]::-webkit-scrollbar { display: none; }
+    div[data-testid="stTab"] { border-radius: 999px !important;
+        padding: 8px 15px !important; flex: 0 0 auto; }
+    div[data-testid="stTab"] p { color: var(--ink-dim); font-weight: 600;
+        font-size: 0.92em; margin: 0; }
+    div[data-testid="stTab"]:hover p { color: var(--ink); }
+    div[data-testid="stTab"][aria-selected="true"] {
+        background: linear-gradient(135deg, #E8C84A, var(--gold)) !important;
+        box-shadow: 0 0 16px rgba(201,162,39,.4); }
+    div[data-testid="stTab"][aria-selected="true"] p {
+        color: #111 !important; font-weight: 800; }
+    div[data-testid="stTab"] .react-aria-SelectionIndicator { display: none; }
+
+    /* ---- Brand every banner: no default Streamlit blue anywhere ---- */
+    div[data-testid="stAlert"] { background: transparent; }
+    div[data-testid="stAlertContainer"] {
+        background: transparent !important; }
+    div[data-testid^="stAlertContent"] {
+        background: #17171a !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,.35); }
+    div[data-testid^="stAlertContent"] p { color: var(--ink); }
+    div[data-testid^="stAlertContent"] a { color: var(--gold); }
+    div[data-testid="stAlertContentInfo"] {
+        border-left: 3px solid var(--gold) !important; }
+    div[data-testid="stAlertContentInfo"] svg { fill: var(--gold) !important; }
+    div[data-testid="stAlertContentWarning"] {
+        border-left: 3px solid #E0A030 !important; }
+    div[data-testid="stAlertContentWarning"] svg { fill: #E0A030 !important; }
+    div[data-testid="stAlertContentSuccess"] {
+        border-left: 3px solid #7BC47F !important; }
+    div[data-testid="stAlertContentSuccess"] svg { fill: #7BC47F !important; }
+    div[data-testid="stAlertContentError"] {
+        border-left: 3px solid #C46A6A !important; }
+    div[data-testid="stAlertContentError"] svg { fill: #C46A6A !important; }
 
     /* Buttons: gold primary, quiet secondary */
     button[kind="primary"], button[data-testid="baseButton-primary"] {
-        background: var(--gold); border-color: var(--gold); color: #111;
-        font-weight: 700; border-radius: 10px; }
+        background: linear-gradient(135deg, #E8C84A, var(--gold));
+        border-color: var(--gold); color: #111;
+        font-weight: 700; border-radius: 10px;
+        box-shadow: 0 0 18px rgba(201,162,39,.35); }
     button[kind="secondary"], button[data-testid="baseButton-secondary"] {
         border-radius: 10px; }
 
@@ -157,9 +208,11 @@ st.markdown(
     .block-container { padding-top: 1.6rem; max-width: 1100px; }
 
     /* ---- Scan home: pick cards, hero edge, mini form bars ---- */
-    .ev-hero { color: #7BC47F; font-size: 2.0em; font-weight: 800;
-               font-variant-numeric: tabular-nums; line-height: 1.05; }
-    .ev-hero.neg { color: #C46A6A; }
+    .ev-hero { color: #7BC47F; font-size: 2.1em; font-weight: 800;
+               font-variant-numeric: tabular-nums; line-height: 1.05;
+               text-shadow: 0 0 24px rgba(123,196,127,.45); }
+    .ev-hero.neg { color: #C46A6A;
+                   text-shadow: 0 0 24px rgba(196,106,106,.45); }
     .ev-cap { color: var(--ink-dim); font-size: 0.72em;
               letter-spacing: 0.16em; font-weight: 700; }
     .pc-head { font-size: 1.06em; margin-bottom: 2px; }
@@ -187,6 +240,27 @@ st.markdown(
                 margin-bottom: 8px; }
     .sug-name { font-weight: 700; }
     .sug-reason { color: var(--ink-dim); font-size: 0.84em; margin-top: 2px; }
+    /* Suggested strip: mini trading cards, not gray boxes */
+    .sug-mini { display: flex; gap: 11px; align-items: center;
+                border: 1px solid var(--line); border-radius: 12px;
+                padding: 10px 12px; margin-bottom: 8px;
+                background: linear-gradient(180deg, #18181c, var(--panel));
+                box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+    .sug-mini-photo { flex-shrink: 0; }
+    .sug-mini-photo img { width: 52px; height: 52px; border-radius: 12px;
+                          object-fit: cover; border: 2px solid var(--gold);
+                          background: #1c1c20; }
+    .sug-mini-initials { width: 52px; height: 52px; border-radius: 12px;
+                         background: #232327; border: 2px solid var(--line);
+                         display: flex; align-items: center;
+                         justify-content: center; font-weight: 800;
+                         color: var(--gold); }
+    .sug-mini-id { min-width: 0; }
+    .sug-mini-name { font-weight: 800; font-size: 0.98em; line-height: 1.25; }
+    .sug-mini-team { color: var(--ink-dim); font-size: 0.78em; margin-top: 1px; }
+    .sug-mini-reason { color: var(--gold); font-size: 0.82em; margin-top: 4px;
+                       font-weight: 600; font-variant-numeric: tabular-nums;
+                       line-height: 1.4; }
     .scan-filter { color: var(--ink-dim); margin: 6px 0; }
 
     /* ---- Trading cards: photo + jersey badge + name plate ---- */
@@ -225,7 +299,8 @@ st.markdown(
                      line-height: 1.55; }
     .prob-line { margin-top: 7px; }
     .prob-num { color: var(--ink); font-weight: 800; font-size: 1.02em;
-                font-variant-numeric: tabular-nums; }
+                font-variant-numeric: tabular-nums;
+                text-shadow: 0 0 16px rgba(201,162,39,.5); }
     .prob-cap { color: var(--ink-dim); font-size: 0.66em;
                 letter-spacing: 0.14em; font-weight: 700; margin-left: 5px; }
 
@@ -235,11 +310,20 @@ st.markdown(
         background: var(--gold); color: #111; border-color: var(--gold);
         font-weight: 700; }
 
-    /* Phone: tighter padding, full-width cards */
+    /* Phone: tighter padding, full-width cards, floating bottom tab bar */
     @media (max-width: 640px) {
-        .block-container { padding-left: 0.9rem; padding-right: 0.9rem; }
+        .block-container { padding-left: 0.9rem; padding-right: 0.9rem;
+                           padding-bottom: 110px; }
         .pick-card { padding: 12px; }
         .ev-big { font-size: 1.25em; }
+        [data-testid="stTabs"] [role="tablist"] {
+            position: fixed; top: auto; bottom: 0; left: 0; right: 0;
+            border-radius: 20px 20px 0 0; border: none;
+            border-top: 1px solid var(--line);
+            padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+            background: rgba(14,14,17,.97); z-index: 200; }
+        div[data-testid="stTab"] { padding: 10px 14px !important; }
+        div[data-testid="stTab"] p { font-size: 0.85em; }
     }
     </style>""",
     unsafe_allow_html=True,
@@ -529,16 +613,20 @@ with tab_scan:
     except Exception:
         _sugs = []
     if _sugs:
-        st.markdown("**Suggested this week**")
-        st.caption("From this week's +EV props and current headlines — "
-                   "players worth a look, not picks.")
+        st.markdown("**Worth a look this week**")
+        st.caption("Hand-picked by the data — this week's sharpest +EV props "
+                   "and the names buzzing in the headlines. Looks, not picks.")
+        from players import headshots as _hs
         _scols = st.columns(min(len(_sugs), 4))
         for _i, _s in enumerate(_sugs[:4]):
             with _scols[_i % 4]:
                 st.markdown(
-                    f"<div class='sug-card'><div class='sug-name'>"
-                    f"{html.escape(str(_s['name']))}</div><div class='sug-reason'>"
-                    f"{html.escape(str(_s['reason']))}</div></div>",
+                    ui_cards.suggestion_card_html(
+                        _s,
+                        photo_b64=_hs.headshot_b64(_s["name"], _rosters_df()),
+                        position=_hs.position_abbr(_s["name"], _rosters_df()),
+                        team=_s.get("team"),
+                    ),
                     unsafe_allow_html=True)
                 if st.button("View", key=f"scan_sug_{_s['name']}"):
                     st.session_state["scan_player"] = _s["name"]
@@ -720,8 +808,8 @@ with tab_record:
     # The 100-pick gate, shown honestly.
     _g = _tr["picks_graded"]
     st.progress(min(_g / _tr["gate_target"], 1.0),
-                text=(f"{_g} of {_tr['gate_target']} graded — full verdict "
-                      f"at {_tr['gate_target']}"
+                text=(f"{_g} of {_tr['gate_target']} graded — early days. "
+                      f"Every pick makes the record stronger."
                       if not _tr["gate_done"]
                       else f"{_tr['gate_target']}-pick gate cleared — "
                            f"the record speaks for itself"))
@@ -739,8 +827,9 @@ with tab_record:
         st.caption("price = our logged odds · closing_price = near kickoff · "
                    "clv_pts = implied-probability points in our favor")
     else:
-        st.info("No picks logged yet — the record starts empty and stays "
-                "honest. Run a scan and log the flags.")
+        st.info("The record starts empty — every pick you log makes it "
+                "stronger. Run a scan, log the flags, and this page grades "
+                "them all in public. Nothing hidden, nothing cherry-picked.")
 
 # ---------------- Builder (SGP-style, FREE to build) ----------------
 with tab_builder:

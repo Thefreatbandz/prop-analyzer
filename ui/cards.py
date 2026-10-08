@@ -306,6 +306,45 @@ def edge_explainer_html(p: dict, *, source: str = "model",
     )
 
 
+def suggestion_card_html(s: dict, *, photo_b64: str | None = None,
+                         position: str | None = None,
+                         team: str | None = None) -> str:
+    """Mini trading card for the Suggested strip.
+
+    Photo (or gold initials fallback) + team-color accent edge, name with
+    position, team line, and the reason string styled like a stat line —
+    not a gray box. The tappable View button stays a Streamlit widget
+    rendered below this HTML by the caller. All interpolated text escaped.
+    """
+    from teams import colors as _tcolors
+
+    team_name = team or s.get("team", "")
+    style = ""
+    accent = _tcolors.team_accent(team_name)
+    if accent:
+        accent_color, _tint = accent
+        style = (f' style="border-color:{accent_color};'
+                 f'box-shadow:0 0 14px {accent_color}30"')
+    if photo_b64:
+        photo_html = f'<img src="{photo_b64}" alt="" loading="lazy">'
+    else:
+        photo_html = (f'<div class="sug-mini-initials">'
+                      f'{_escape(_headshots.initials(s.get("name", "")))}</div>')
+    pos_html = (f'<span class="tcard-pos">{_escape(position)}</span>'
+                if position else "")
+    team_html = (f'<div class="sug-mini-team">{_escape(team_name)}</div>'
+                 if team_name else "")
+    return (
+        f'<div class="sug-mini"{style}>'
+        f'<div class="sug-mini-photo">{photo_html}</div>'
+        '<div class="sug-mini-id">'
+        f'<div class="sug-mini-name">{_escape(s.get("name", ""))}{pos_html}</div>'
+        f'{team_html}'
+        f'<div class="sug-mini-reason">{_escape(s.get("reason", ""))}</div>'
+        "</div></div>"
+    )
+
+
 def filter_picks(picks: list[dict], category: str, side: str) -> list[dict]:
     """Apply the stat-category chips + Over/Under pills to the pick list.
 
