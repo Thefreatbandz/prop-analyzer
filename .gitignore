@@ -1,0 +1,10 @@
+.env
+data/
+*.parquet
+projections/live_distributions.json
+__pycache__/
+*.pyc
+.venv/
+
+# Downloaded headshot thumbnails (rebuildable, per-machine)
+cache/

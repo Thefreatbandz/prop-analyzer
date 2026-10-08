@@ -1,0 +1,12 @@
+# Pinned 2026-10-07 — versions verified working together in
+# ~/workspace/venvs/prop-analyzer. Re-pin deliberately, not blindly.
+# pip-audit (2026-10-07): no known vulnerabilities in this set.
+streamlit==1.65.0
+nflreadpy==0.1.5
+polars==2.0.0
+numpy==2.5.3
+pandas==3.0.6
+requests==2.34.2
+python-dotenv==1.2.4
+# Test-only (not needed to run the app):
+# pytest==9.1.1
