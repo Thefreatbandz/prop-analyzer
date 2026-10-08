@@ -616,22 +616,24 @@ with tab_scan:
         st.markdown("**Worth a look this week**")
         st.caption("Hand-picked by the data — this week's sharpest +EV props "
                    "and the names buzzing in the headlines. Looks, not picks.")
-        from players import headshots as _hs
+        _rosters = _rosters_df()
         _scols = st.columns(min(len(_sugs), 4))
+        _rendered = 0
         for _i, _s in enumerate(_sugs[:4]):
             with _scols[_i % 4]:
-                st.markdown(
-                    ui_cards.suggestion_card_html(
-                        _s,
-                        photo_b64=_hs.headshot_b64(_s["name"], _rosters_df()),
-                        position=_hs.position_abbr(_s["name"], _rosters_df()),
-                        team=_s.get("team"),
-                    ),
-                    unsafe_allow_html=True)
+                # suggestion_card_safe never raises: one bad suggestion is a
+                # skipped card, never a broken Scan tab (live 2026-10-08: an
+                # AttributeError here blanked the whole home view).
+                _card = ui_cards.suggestion_card_safe(_s, _rosters)
+                if _card is None:
+                    continue
+                st.markdown(_card, unsafe_allow_html=True)
+                _rendered += 1
                 if st.button("View", key=f"scan_sug_{_s['name']}"):
                     st.session_state["scan_player"] = _s["name"]
                     st.rerun()
-        st.divider()
+        if _rendered:
+            st.divider()
 
     # --- Friendly explainer (BettingPros-style "what is edge?").
     with st.expander("What is +EV?"):

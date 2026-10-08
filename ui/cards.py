@@ -345,6 +345,27 @@ def suggestion_card_html(s: dict, *, photo_b64: str | None = None,
     )
 
 
+def suggestion_card_safe(s: dict, rosters_df) -> str | None:
+    """Render one suggestion card; never raises — None on any failure.
+
+    The Scan strip calls this per card (headshot lookups included) so one
+    bad suggestion can never take down the whole tab the way a raw
+    exception in the render loop would. A skipped card is a missing card,
+    not a broken page.
+    """
+    try:
+        if not isinstance(s, dict) or not s.get("name"):
+            return None
+        return suggestion_card_html(
+            s,
+            photo_b64=_headshots.headshot_b64(s["name"], rosters_df),
+            position=_headshots.position_abbr(s["name"], rosters_df),
+            team=s.get("team"),
+        )
+    except Exception:
+        return None
+
+
 def filter_picks(picks: list[dict], category: str, side: str) -> list[dict]:
     """Apply the stat-category chips + Over/Under pills to the pick list.
 

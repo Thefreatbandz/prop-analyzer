@@ -79,7 +79,7 @@ def team_accent(team: str | None) -> tuple[str, str] | None:
     near-black (a black wash is invisible anyway).
     Returns None for unknown teams -> caller falls back to gold.
     """
-    if not team:
+    if not team or not isinstance(team, str):
         return None
     abbr = NAME_TO_ABBR.get(team.strip(), team.strip().upper())
     colors = TEAM_COLORS.get(abbr)

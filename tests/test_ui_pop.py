@@ -128,7 +128,9 @@ def test_suggestion_card_unknown_team_no_accent():
 
 
 def test_scan_uses_mini_cards():
-    assert "ui_cards.suggestion_card_html(" in SRC
+    # v6.1: the strip renders through the never-raises safe wrapper so one
+    # bad suggestion can't blank the Scan tab (live AttributeError 2026-10-08).
+    assert "ui_cards.suggestion_card_safe(" in SRC
     assert "Worth a look this week" in SRC
 
 
@@ -141,3 +143,44 @@ def test_track_record_gate_copy_is_encouraging():
 
 def test_track_record_empty_copy_is_warmer():
     assert "Nothing hidden, nothing cherry-picked" in SRC
+
+
+# ---------- Suggestion strip never kills the Scan tab (2026-10-08 live bug) ----------
+
+
+def test_suggestion_card_safe_renders_good_input():
+    html = cards.suggestion_card_safe(_sug(), rosters_df=None)
+    assert html is not None
+    assert "sug-mini" in html
+    assert "Josh Allen" in html
+
+
+def test_suggestion_card_safe_never_raises_on_poison_input():
+    # Whatever the feed hands us, the strip must never raise into the tab.
+    # Missing/unusable name -> card skipped (None); anything else renders,
+    # possibly degraded (non-string team falls back to no accent, escaped).
+    assert cards.suggestion_card_safe(
+        {"name": None, "team": "BUF", "reason": "x"}, rosters_df=None) is None
+    assert cards.suggestion_card_safe(
+        {"team": "BUF", "reason": "x"}, rosters_df=None) is None
+    assert cards.suggestion_card_safe("not a dict", rosters_df=None) is None
+    assert cards.suggestion_card_safe(None, rosters_df=None) is None
+    # Degraded but safe: dict/int team renders escaped, no accent, no raise.
+    for team in ({"abbr": "BUF"}, 42):
+        html = cards.suggestion_card_safe(
+            {"name": "Josh Allen", "team": team, "reason": "x"},
+            rosters_df=None)
+        assert html is not None and "sug-mini" in html
+        assert "box-shadow:0 0 14px" not in html
+
+
+def test_team_accent_rejects_non_string_team():
+    from teams import colors as tcolors
+    assert tcolors.team_accent({"abbr": "BUF"}) is None
+    assert tcolors.team_accent(42) is None
+    assert tcolors.team_accent(None) is None
+    assert tcolors.team_accent("BUF") is not None
+
+
+def test_scan_strip_uses_safe_renderer():
+    assert "ui_cards.suggestion_card_safe(" in SRC
