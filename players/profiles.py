@@ -28,6 +28,30 @@ GAMELOG_COLS = [
 
 VALID_WINDOWS = (5, 10, 15)
 
+# Position -> (nflverse stat column, friendly label) for the "season
+# form" line on the player spotlight card. Skill positions only — a
+# lineman's card honestly shows no form line instead of a fake one.
+POS_FORM_STAT = {
+    "QB": ("passing_yards", "Passing yards"),
+    "RB": ("rushing_yards", "Rushing yards"),
+    "WR": ("receiving_yards", "Receiving yards"),
+    "TE": ("receiving_yards", "Receiving yards"),
+}
+
+
+def normalize_name(name: str | None) -> str:
+    """Name match key: lowercase, punctuation stripped.
+
+    Books and headlines don't punctuate the way nflverse does
+    ("AJ Brown" vs "A.J. Brown", "Erick All" vs "Erick All Jr." is
+    handled by prefix tiers below). Comparing normalized keys instead
+    of raw strings is what makes "AJ Brown" find the right player
+    instead of some other Brown.
+    """
+    import re
+
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
 
 def _cols(df, want: list[str]) -> list[str]:
     have = set(df.columns)
@@ -83,18 +107,30 @@ def get_roster(rosters_df, team_abbr: str | None = None) -> list[dict]:
     return out
 
 
-def find_player(rosters_df, name: str) -> dict | None:
-    """Bio lookup. Exact full-name match first, then last-name fallback
-    (books write 'Josh Allen', nflverse sometimes 'Allen, Josh')."""
-    import polars as pl
+def _pick_row(rows: list[dict], team: str | None) -> dict | None:
+    """Choose the right row when several share a name.
 
-    hit = rosters_df.filter(pl.col("full_name") == name)
-    if hit.height == 0:
-        last = name.split()[-1]
-        hit = rosters_df.filter(pl.col("last_name") == last)
-    if hit.height == 0:
+    Same-name players exist (8 dup full_names in the 2026 roster).
+    Prefer the requested team, then Active status — deterministic,
+    and it never silently returns a lineman for a wideout the way the
+    old "first row wins" fallback did.
+    """
+    if not rows:
         return None
-    r = hit.to_dicts()[0]
+    if team:
+        trows = [r for r in rows
+                 if (r.get("team") or "").upper() == team.upper()]
+        if trows:
+            rows = trows
+    act = [r for r in rows if (r.get("status") or "").upper() == "ACT"]
+    cands = act or rows
+    # Final tiebreak is alphabetical — neutral and deterministic, never
+    # a popularity guess (the app doesn't do favorites).
+    cands = sorted(cands, key=lambda r: r.get("full_name") or "")
+    return cands[0]
+
+
+def _bio_row(r: dict) -> dict:
     return {
         "name": r.get("full_name"),
         "team": r.get("team"),
@@ -104,6 +140,81 @@ def find_player(rosters_df, name: str) -> dict | None:
         "status": r.get("status"),
         "status_detail": r.get("status_description_abbr"),
     }
+
+
+def find_player(rosters_df, name: str, team: str | None = None) -> dict | None:
+    """Bio lookup, punctuation-blind and team-aware.
+
+    Tiers, first hit wins:
+      1. exact full_name ("Erick All")
+      2. normalized full_name ("AJ Brown" -> "A.J. Brown")
+      3. normalized prefix — query is the start of the roster name
+         ("Chris Godwin" -> "Chris Godwin Jr.")
+      4. last name — but ONLY when it identifies exactly one player
+         (team-narrowed, Active preferred). "Allen" matching five guys
+         returns None: an honest miss beats a wrong player.
+
+    The old code's last-name fallback returned to_dicts()[0] — an
+    arbitrary row — so "AJ Brown" resolved to Trent Brown (HOU, OL).
+    Tier 2 fixes the name; tier 4's exactly-one rule fixes the row.
+    """
+    import polars as pl
+
+    if not name:
+        return None
+    rows = rosters_df.to_dicts()
+
+    hit = [r for r in rows if r.get("full_name") == name]
+    if hit:
+        return _bio_row(_pick_row(hit, team))
+
+    want = normalize_name(name)
+    if want:
+        hit = [r for r in rows
+               if normalize_name(r.get("full_name")) == want]
+        if hit:
+            return _bio_row(_pick_row(hit, team))
+        # Prefix tier: the query is a leading chunk of the roster name
+        # ("Chris Godwin" is how everyone writes "Chris Godwin Jr.").
+        hit = [r for r in rows
+               if normalize_name(r.get("full_name")).startswith(want)
+               and len(want) >= 4]
+        if hit:
+            return _bio_row(_pick_row(hit, team))
+
+    # Last-name tier: exactly-one-or-None (see _pick_last_name).
+    last = normalize_name(name.split()[-1]) if name.split() else ""
+    if len(last) > 2:
+        hit = [r for r in rows if normalize_name(r.get("last_name")) == last]
+        row = _pick_last_name(hit, team)
+        if row:
+            return _bio_row(row)
+    return None
+
+
+def _pick_last_name(rows: list[dict], team: str | None) -> dict | None:
+    """Last-name tier picker: exactly-one-or-None.
+
+    A bare last name ("Allen") can match several players. Guessing one
+    is how the old code showed Trent Brown for "AJ Brown" — a wrong
+    player presented as fact. So: narrow by team, prefer Active, and if
+    several real candidates remain, return None. The UI then shows its
+    honest "couldn't match this name" fallback instead of a wrong card.
+    Accuracy is the product; a miss beats a wrong hit.
+    """
+    if team:
+        trows = [r for r in rows
+                 if (r.get("team") or "").upper() == team.upper()]
+        if trows:
+            rows = trows
+    act = [r for r in rows if (r.get("status") or "").upper() == "ACT"]
+    cands = act or rows
+    # De-dupe to distinct players (the roster table can carry a player
+    # twice across status rows).
+    seen = {r.get("full_name") for r in cands}
+    if len(seen) == 1:
+        return cands[0]
+    return None
 
 
 def game_log(player_stats_df, player_name: str, last_n: int = 10) -> list[dict]:
@@ -209,4 +320,66 @@ def latest_injury_status(injuries_df, player_name: str, team: str,
         "status": r.get("report_status"),
         "details": r.get("report_details") or r.get("injury"),
         "week": r.get("week"),
+    }
+
+
+def roster_coverage(rosters_df) -> dict:
+    """Honest league-coverage stats for the Players tab header.
+
+    Returns {players, teams, active, missing_headshots}. The roster is
+    the full nflverse table for the season — it includes practice-squad
+    and reserve players, not just the 53-man active roster, and we say
+    so in the UI instead of pretending every row is a starter.
+    """
+    import polars as pl
+
+    teams = rosters_df["team"].unique().to_list()
+    teams = [t for t in teams if t]
+    active = rosters_df.filter(pl.col("status") == "ACT").height
+    missing_photo = rosters_df.filter(
+        pl.col("headshot_url").is_null()
+        | (pl.col("headshot_url") == "")
+    ).height
+    return {
+        "players": rosters_df.height,
+        "teams": len(teams),
+        "active": active,
+        "missing_headshots": missing_photo,
+    }
+
+
+def player_form_summary(player_stats_df, player_name: str,
+                        position: str | None, season: int) -> dict | None:
+    """Compact season form for the spotlight card.
+
+    Returns {label, games, season_avg, last5} for the player's primary
+    stat (pass/rush/rec yards by position), or None when the position
+    has no meaningful yardage stat — a lineman's card shows no form
+    line rather than a made-up one.
+    """
+    import polars as pl
+
+    entry = POS_FORM_STAT.get((position or "").upper())
+    if not entry:
+        return None
+    col, label = entry
+    if col not in player_stats_df.columns:
+        return None
+    games = (
+        player_stats_df.filter(
+            (pl.col("player_display_name") == player_name)
+            & (pl.col("season") == season)
+            & (pl.col("season_type") == "REG")
+        )
+        .select(["week", col])
+        .sort("week")
+    )
+    vals = [v for v in games[col].to_list() if v is not None]
+    if not vals:
+        return None
+    return {
+        "label": label,
+        "games": len(vals),
+        "season_avg": round(sum(vals) / len(vals), 1),
+        "last5": vals[-5:],
     }

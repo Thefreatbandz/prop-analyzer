@@ -366,6 +366,133 @@ def suggestion_card_safe(s: dict, rosters_df) -> str | None:
         return None
 
 
+def _accent_style(team: str | None) -> tuple[str, str]:
+    """(card_style, badge_style) for team-color accents on a card.
+
+    Same recipe as trading_card_html: team-color border + glow, faint
+    tint wash, readable jersey badge. Unknown team -> gold-on-charcoal
+    defaults (empty styles).
+    """
+    from teams import colors as _tcolors
+
+    card_style = ""
+    badge_style = ""
+    accent = _tcolors.team_accent(team)
+    if accent:
+        accent_color, tint = accent
+        parts = [f"border-color:{accent_color}",
+                 f"box-shadow:0 0 16px {accent_color}30"]
+        if tint:
+            parts.append(
+                f"background:linear-gradient(135deg, {tint}1A, transparent 60%)")
+        card_style = f' style="{";".join(parts)}"'
+        badge_style = (
+            f' style="background:{accent_color};'
+            f'color:{_tcolors.badge_text_color(accent_color)}"'
+        )
+    return card_style, badge_style
+
+
+def player_spotlight_html(name: str, *, bio: dict | None = None,
+                          photo_b64: str | None = None,
+                          form: dict | None = None,
+                          matchup: str = "",
+                          status_line: str = "") -> str:
+    """Player spotlight card for the View flow — always renders something.
+
+    Tapping View on a suggestion used to land on a flat "no +EV flags"
+    note that felt broken. Now the player always gets their card first:
+    photo (or initials), team · position, jersey badge, season form
+    (last-5 bars vs their own season average — green = above it), next
+    matchup, and any roster/injury status. The +EV props (or the honest
+    "market has this one priced right" note) render below it.
+
+    bio: find_player() row or None (unknown name still gets a card with
+    an honest "not on a current roster" line). form: player_form_summary()
+    dict or None (no form line for positions without a yardage stat).
+    All interpolated text is escaped.
+    """
+    team = (bio or {}).get("team")
+    position = (bio or {}).get("position")
+    jersey = (bio or {}).get("jersey")
+    card_style, badge_style = _accent_style(team)
+
+    if photo_b64:
+        photo_html = f'<img src="{photo_b64}" alt="" loading="lazy">'
+    else:
+        photo_html = (f'<div class="tcard-initials">'
+                      f'{_escape(_headshots.initials(name))}</div>')
+    try:
+        jersey_txt = str(int(jersey)) if jersey is not None else ""
+    except (TypeError, ValueError):
+        jersey_txt = ""
+    jersey_html = (f'<span class="jersey-badge"{badge_style}>'
+                   f'{_escape(jersey_txt)}</span>' if jersey_txt else "")
+    pos_html = (f'<span class="tcard-pos">{_escape(position)}</span>'
+                if position else "")
+    team_html = (f'<div class="pc-team">{_escape(team)}</div>' if team
+                 else '<div class="pc-team">Not on a current roster</div>')
+
+    form_html = ""
+    if form:
+        # Bars vs the player's own season average: green = above it.
+        # This is form, not a pick — no edge claim attached.
+        bars = mini_bars_html(form["last5"], form["season_avg"], "over")
+        form_html = (
+            f'<div class="pc-edge-line">{form["season_avg"]:g} '
+            f'{_escape(form["label"])}/game this season '
+            f'({_escape(str(form["games"]))} games)</div>'
+            f'<div class="pc-team" style="margin-top:6px">Last 5 vs own average</div>'
+            f'{bars}'
+        )
+    matchup_html = (f'<div class="pc-team">{_escape(matchup)}</div>'
+                    if matchup else "")
+    status_html = (f'<div class="pc-cold">{_escape(status_line)}</div>'
+                   if status_line else "")
+    return (
+        f'<div class="pick-card tcard"{card_style}>'
+        '<div class="tcard-top">'
+        f'<div class="tcard-photo">{photo_html}{jersey_html}</div>'
+        '<div class="tcard-id">'
+        f'<div class="tcard-name">{_escape(name)}{pos_html}</div>'
+        f'{team_html}'
+        f'{form_html}'
+        f'{matchup_html}'
+        f'{status_html}'
+        "</div></div></div>"
+    )
+
+
+def game_row_html(g: dict) -> str:
+    """One slim schedule row: team dots + abbrs, kickoff, TODAY pill.
+
+    g comes from games.schedule.parse_events: {away, home, away_abbr,
+    home_abbr, starts_at, week, is_today, kickoff}. Team dots use the
+    club colors (gold fallback); everything user-visible is escaped.
+    """
+    from teams import colors as _tcolors
+
+    def _dot(abbr):
+        accent = _tcolors.team_accent(abbr)
+        color = accent[0] if accent else "#C9A227"
+        return f'<span class="tdot" style="background:{color}"></span>'
+
+    away = _escape(g.get("away_abbr") or g.get("away") or "?")
+    home = _escape(g.get("home_abbr") or g.get("home") or "?")
+    kickoff = _escape(g.get("kickoff") or "TBD")
+    week = _escape(g.get("week") or "")
+    meta = f"{kickoff}" + (f" · {week}" if week else "")
+    pill = ' <span class="today-pill">TODAY</span>' if g.get("is_today") else ""
+    return (
+        f'<div class="game-row">{_dot(g.get("away_abbr"))}'
+        f'<span class="game-teams">{away}</span>'
+        f'<span class="pc-team"> @ </span>'
+        f'{_dot(g.get("home_abbr"))}'
+        f'<span class="game-teams">{home}</span>{pill}'
+        f'<span class="game-meta">{meta}</span></div>'
+    )
+
+
 def filter_picks(picks: list[dict], category: str, side: str) -> list[dict]:
     """Apply the stat-category chips + Over/Under pills to the pick list.
 

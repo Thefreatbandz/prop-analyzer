@@ -62,6 +62,11 @@ NAME_TO_ABBR: dict[str, str] = {
     "Tennessee Titans": "TEN", "Washington Commanders": "WAS",
 }
 
+# Abbr aliases: nflverse data (rosters, schedules, teams table) uses
+# "LA" for the Rams while the league's legacy abbr is "LAR".
+# team_accent() resolves these so Rams cards keep their colors.
+ABBR_ALIASES = {"LA": "LAR"}
+
 
 def _luminance(hex_color: str) -> float:
     """Relative luminance 0..1 — used to keep accents visible on charcoal."""
@@ -82,6 +87,8 @@ def team_accent(team: str | None) -> tuple[str, str] | None:
     if not team or not isinstance(team, str):
         return None
     abbr = NAME_TO_ABBR.get(team.strip(), team.strip().upper())
+    # "LA" (nflverse's Rams abbr) -> "LAR" (canonical key).
+    abbr = ABBR_ALIASES.get(abbr, abbr)
     colors = TEAM_COLORS.get(abbr)
     if not colors:
         return None

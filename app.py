@@ -43,7 +43,7 @@ from functools import lru_cache
 
 LEAGUE_ABBRS = ["ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
                 "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
-                "LAC", "LAR", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+                "LAC", "LA", "LV", "MIA", "MIN", "NE", "NO", "NYG",
                 "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS"]
 
 
@@ -325,6 +325,22 @@ st.markdown(
         div[data-testid="stTab"] { padding: 10px 14px !important; }
         div[data-testid="stTab"] p { font-size: 0.85em; }
     }
+
+    /* ---- Games strip: slim rows, team dots, gold TODAY pill ---- */
+    .game-row { display: flex; align-items: center; gap: 10px;
+                border: 1px solid var(--line); border-radius: 10px;
+                padding: 8px 12px; margin-bottom: 6px;
+                background: var(--panel); }
+    .game-teams { font-weight: 700; font-size: 0.95em; white-space: nowrap; }
+    .game-meta { color: var(--ink-dim); font-size: 0.82em; margin-left: auto;
+                 text-align: right; white-space: nowrap; }
+    .today-pill { background: linear-gradient(135deg, #E8C84A, var(--gold));
+                  color: #111; font-weight: 800; font-size: 0.7em;
+                  border-radius: 999px; padding: 3px 10px;
+                  letter-spacing: 0.08em; white-space: nowrap;
+                  box-shadow: 0 0 14px rgba(201,162,39,.45); }
+    .tdot { width: 9px; height: 9px; border-radius: 50%;
+            display: inline-block; margin: 0 5px 0 9px; flex-shrink: 0; }
     </style>""",
     unsafe_allow_html=True,
 )
@@ -399,6 +415,26 @@ def run_scan(model_mode: str, min_ev_pct: float):
     dists = _load_dists(model_mode)
     prop_picks = engine.rank_props(props, dists, min_ev=min_ev_pct / 100)
     return ml_picks, prop_picks, ml_note, props_note, board_empty_live
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading schedule...")
+def _upcoming_games():
+    # The schedule strip on the Scan tab. Same Lumify events feed the
+    # props scanner uses (1 credit), parsed into display dicts by
+    # games.schedule. Any failure -> friendly fallback, never a crash,
+    # never key material in the UI.
+    try:
+        from games import schedule as gsched
+
+        events = lumify.list_events(status="scheduled")
+        games = gsched.parse_events(events)
+        # Today's games first — that's what Tbandz asked to see.
+        games.sort(key=lambda g: (not g["is_today"],
+                                  g["starts_at"] is None, g["starts_at"]))
+        return games, None
+    except Exception:
+        return [], ("The game schedule isn't available right now — "
+                    "check back soon.")
 
 
 @st.cache_data(show_spinner="Scanning fades...")
@@ -535,6 +571,67 @@ def _card_form(p: dict, window: str) -> tuple[str, str, str]:
         return "", "", ""
 
 
+def _render_player_spotlight(name: str, team: str | None):
+    """Player spotlight card for the View flow — always shows something.
+
+    Tapping View on a suggestion used to land on a bare "no +EV flags"
+    note that felt broken. Now the player gets their card first: photo
+    (or initials), team · position, jersey, season form (last-5 bars vs
+    their own average), next matchup, roster/injury status. Their +EV
+    props — or the honest "priced right" note — render below it.
+    Every lookup is guarded: a missing bio still gets a card, never a
+    crash.
+    """
+    from players import profiles as _prof
+    from players import headshots as _hs
+
+    try:
+        bio = _prof.find_player(_rosters_df(), name, team=team)
+    except Exception:
+        bio = None
+    canon = (bio or {}).get("name") or name
+    pos = (bio or {}).get("position")
+    abbr = (bio or {}).get("team") or team
+    season, week = _cur_week()
+
+    try:
+        form = _prof.player_form_summary(_player_stats_df(), canon, pos,
+                                         season)
+    except Exception:
+        form = None
+    matchup = ""
+    if abbr:
+        try:
+            mu = _prof.upcoming_matchup(_schedules_df(), abbr, season, week)
+            if mu:
+                matchup = (f"Next: {mu['home_away']} {mu['opponent']} "
+                           f"· wk {mu['week']}")
+        except Exception:
+            pass
+    status_line = ""
+    if bio:
+        if bio.get("status") and bio["status"] != "ACT":
+            status_line = f"Roster status: {bio['status']}"
+        try:
+            inj = _prof.latest_injury_status(_injuries_df(), canon, abbr,
+                                             season, week)
+            if inj and inj.get("status"):
+                _inj_txt = f"Injury report: {inj['status']}"
+                status_line = (f"{status_line} · {_inj_txt}"
+                               if status_line else _inj_txt)
+        except Exception:
+            pass
+    try:
+        photo = _hs.headshot_b64(canon, _rosters_df())
+    except Exception:
+        photo = None
+    st.markdown(
+        ui_cards.player_spotlight_html(
+            canon, bio=bio, photo_b64=photo, form=form,
+            matchup=matchup, status_line=status_line),
+        unsafe_allow_html=True)
+
+
 # ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("Prop Analyzer")
@@ -603,6 +700,23 @@ with tab_scan:
     if props_note and not board_empty_live:
         st.warning(props_note)
 
+    # --- This week: upcoming games, today's games pinned first ---
+    _games, _games_note = _upcoming_games()
+    if _games:
+        _n_today = sum(1 for g in _games if g["is_today"])
+        _hdr = "**This week**"
+        _sub = (f"{len(_games)} upcoming games"
+                + (f" · {_n_today} today" if _n_today else ""))
+        st.markdown(_hdr)
+        st.caption(_sub)
+        from games import schedule as _gsched
+        for _g in _games[:10]:
+            _g = {**_g, "kickoff": _gsched.kickoff_label(_g["starts_at"])}
+            st.markdown(ui_cards.game_row_html(_g), unsafe_allow_html=True)
+        st.divider()
+    elif _games_note:
+        st.caption(_games_note)
+
     # --- Suggested players strip: 100% data-driven (top EV + trending).
     # Nothing here is anyone's opinion — every suggestion carries its
     # reason string. Tapping one filters the cards below to that player.
@@ -637,6 +751,10 @@ with tab_scan:
                 _rendered += 1
                 if st.button("View", key=f"scan_sug_{_s['name']}"):
                     st.session_state["scan_player"] = _s["name"]
+                    # The team travels with the tap so the bio lookup can
+                    # tell same-last-name players apart ("AJ Brown" the
+                    # wideout vs any other Brown).
+                    st.session_state["scan_player_team"] = _s.get("team")
                     st.rerun()
         if _rendered:
             st.divider()
@@ -663,6 +781,7 @@ with tab_scan:
             unsafe_allow_html=True)
         if _fc2.button("Clear", key="scan_player_clear"):
             st.session_state.pop("scan_player", None)
+            st.session_state.pop("scan_player_team", None)
             st.rerun()
 
     # --- Chips, not settings pages: stat category, side, form window.
@@ -697,31 +816,25 @@ with tab_scan:
     if _scan_player:
         picks = [p for p in picks if p.get("player") == _scan_player]
 
+    # View flow: the spotlight card always renders first, so tapping
+    # View on a suggestion never lands on a dead-looking empty state.
+    # +EV props (or the honest "priced right" note) follow below.
+    if _scan_player:
+        _render_player_spotlight(_scan_player,
+                                 st.session_state.get("scan_player_team"))
+
     if not picks:
         if board_empty_live:
             # Props board is empty because no games are posted — do NOT
             # claim "the market is sharp"; that would be dishonest.
             st.info(props_note)
         elif _scan_player:
-            # "View" was tapped on a suggestion but this player has no +EV
-            # flags right now (usually a news-trending name with no
-            # mispriced props). Say so plainly with the player's context
-            # instead of the generic empty state that looks broken.
-            _bio = None
-            try:
-                from players import profiles as _prof
-                _bio = _prof.find_player(_rosters_df(), _scan_player)
-            except Exception:
-                _bio = None
-            _team_pos = ""
-            if _bio:
-                _team_pos = f" ({_bio.get('team', '')}" + \
-                    (f" · {_bio.get('position', '')}"
-                     if _bio.get('position') else "") + ")"
-            st.info(f"No +EV flags for **{_scan_player}**{_team_pos} at the "
-                    f"current threshold — the market has this one priced "
-                    f"right, so there's nothing to show. That's a result "
-                    f"too. Their full profile lives in the **Players** tab.")
+            # The spotlight above already introduced the player — this
+            # is just the honest result: no mispriced props right now.
+            st.info(f"No +EV flags for **{_scan_player}** at the current "
+                    f"threshold — the market has this one priced right, "
+                    f"so there's nothing to show. That's a result too. "
+                    f"Their full profile lives in the **Players** tab.")
         elif not all_picks and not _fades_mode:
             st.info("No +EV flags at the current threshold. The market is "
                     "sharp today — that's a result too.")
@@ -1029,6 +1142,15 @@ with tab_players:
     from players import preseason as preseason_mod
 
     st.subheader("Player profiles — all 32 teams")
+    # Honest coverage line: the full nflverse roster table, not just
+    # the 53-man active roster — we say what's in the data.
+    try:
+        _cov = profiles.roster_coverage(_rosters_df())
+        st.caption(f"{_cov['players']:,} rostered players · {_cov['teams']} teams · "
+                   f"{_cov['active']:,} active — full league roster "
+                   f"(practice squad & reserve included)")
+    except Exception:
+        pass
 
     # --- Suggested players: this week's +EV props + headlines ---
     try:

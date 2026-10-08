@@ -50,11 +50,23 @@ def _safe_id(name: str, gsis_id: str | None) -> str:
 
 
 def _row_for(name: str, rosters_df):
-    """Roster row for a display name ("Josh Allen"), or None."""
+    """Roster row for a display name ("Josh Allen"), or None.
+
+    Exact match first, then the same punctuation-blind key the bio
+    lookup uses — "AJ Brown" must find "A.J. Brown"'s headshot too,
+    not silently fall back to initials.
+    """
     try:
         hit = rosters_df.filter(rosters_df["full_name"] == name)
         if hit.height:
             return hit.to_dicts()[0]
+        from players.profiles import normalize_name
+
+        want = normalize_name(name)
+        if want:
+            for r in rosters_df.to_dicts():
+                if normalize_name(r.get("full_name")) == want:
+                    return r
     except Exception:
         pass
     return None
