@@ -8,5 +8,6 @@ numpy==2.5.3
 pandas==3.0.6
 requests==2.34.2
 python-dotenv==1.2.4
+Pillow==12.3.0  # headshot thumbnails for trading-card picks
 # Test-only (not needed to run the app):
 # pytest==9.1.1
