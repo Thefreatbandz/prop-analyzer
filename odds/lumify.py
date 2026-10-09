@@ -102,7 +102,23 @@ def get_player_props(event_id: str | None = None, sport: str = "nfl",
         if not upcoming:
             return {"props": [],
                     "note": f"no upcoming {sport.upper()} games right now"}
-        event_id = upcoming[0].get("id")
+        # First event with actually-posted props wins. `available: false`
+        # checks are FREE, so skipping dead events costs no credits.
+        # (2026-10-09: MLB's first listed event had no props while the
+        # third did — blind-first broke the whole sport scan.)
+        event_id = None
+        for e in upcoming:
+            eid = e.get("id")
+            try:
+                board = fetch_props(eid, sport=sport, force=force)
+            except Exception:
+                continue
+            props = board.get("player_props", board.get("props", []))
+            if props:
+                event_id = eid
+                return board
+        return {"props": [],
+                "note": f"no {sport.upper()} games have posted player props yet"}
     return fetch_props(event_id, sport=sport, force=force)
 
 

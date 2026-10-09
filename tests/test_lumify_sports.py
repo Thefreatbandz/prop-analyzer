@@ -113,3 +113,40 @@ def test_normalize_default_is_nfl():
     board = lumify.load_sample()
     props = lumify.normalize(board)
     assert props[0]["market"] == "player_pass_yds"
+
+
+def test_get_player_props_skips_dead_events(monkeypatch):
+    # 2026-10-09: MLB's first listed event had no posted props while the
+    # third did — blind-first selection broke the whole sport scan.
+    # get_player_props must skip to the first event with actual props.
+    import odds.lumify as lum
+
+    dead = {"id": "e1", "name": "Dead Game", "status": "scheduled"}
+    live = {"id": "e2", "name": "Live Game", "status": "scheduled"}
+    monkeypatch.setattr(lum, "list_events", lambda status="scheduled", sport="nfl": [dead, live])
+
+    def fake_fetch(event_id, sport="nfl", force=False):
+        if event_id == "e1":
+            return {"player_props": [], "available": False}
+        return {"player_props": [{"player": "P", "market": "hits", "line": 0.5,
+                                  "books": {"dk": {"over": -110, "under": -110}}}],
+                "available": True}
+
+    monkeypatch.setattr(lum, "fetch_props", fake_fetch)
+    monkeypatch.setattr(lum, "_key", lambda: "fake-key")
+    board = lum.get_player_props(sport="mlb")
+    props = board.get("player_props", [])
+    assert len(props) == 1 and props[0]["player"] == "P"
+
+
+def test_get_player_props_all_dead_returns_honest_empty(monkeypatch):
+    import odds.lumify as lum
+
+    dead = {"id": "e1", "name": "Dead Game", "status": "scheduled"}
+    monkeypatch.setattr(lum, "list_events", lambda status="scheduled", sport="nfl": [dead])
+    monkeypatch.setattr(lum, "fetch_props",
+                        lambda event_id, sport="nfl", force=False: {"player_props": []})
+    monkeypatch.setattr(lum, "_key", lambda: "fake-key")
+    board = lum.get_player_props(sport="mlb")
+    assert board.get("player_props", board.get("props", [])) == []
+    assert "note" in board
