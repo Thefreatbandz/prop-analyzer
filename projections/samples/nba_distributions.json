@@ -1,0 +1,52 @@
+{
+ "projections": {
+  "LeBron James": {
+   "player_points": {
+    "mean": 20.36404253785793,
+    "std": 5.782277925275874,
+    "n": 60,
+    "team": "LAL"
+   }
+  },
+  "Anthony Davis": {
+   "player_rebounds": {
+    "mean": 11.232393845947557,
+    "std": 4.199453118350407,
+    "n": 147,
+    "team": "DAL"
+   }
+  },
+  "Jayson Tatum": {
+   "player_assists": {
+    "mean": 6.021469127351982,
+    "std": 2.830390666398862,
+    "n": 162,
+    "team": "BOS"
+   }
+  },
+  "Stephen Curry": {
+   "player_threes": {
+    "mean": 4.189249515771119,
+    "std": 2.024081774658688,
+    "n": 187,
+    "team": "GSW"
+   }
+  },
+  "Luka Doncic": {
+   "player_pra": {
+    "mean": 49.29521615957579,
+    "std": 11.914770240526341,
+    "n": 184,
+    "team": "LAL"
+   }
+  },
+  "Jrue Holiday": {
+   "player_steals": {
+    "mean": 0.8051847453110287,
+    "std": 0.806157889222293,
+    "n": 184,
+    "team": "POR"
+   }
+  }
+ }
+}

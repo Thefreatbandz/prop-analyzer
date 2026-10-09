@@ -29,6 +29,71 @@ STAT_MAP = {
     "player_rec_tds": ("receiving_tds", {"WR", "TE", "RB"}),
 }
 
+# NBA book market key -> nba_data game-log column. player_pra is a
+# computed combo (PTS+REB+AST), handled specially by the builder.
+NBA_STAT_MAP = {
+    "player_points": "PTS",
+    "player_rebounds": "REB",
+    "player_assists": "AST",
+    "player_threes": "FG3M",
+    "player_steals": "STL",
+    "player_blocks": "BLK",
+    "player_pra": "PRA",  # computed
+}
+
+# MLB book market key -> mlb_data game-log column.
+# Honest gaps (v1): runs (batter) and earned_runs (pitcher) are NOT
+# derivable from pitch-level statcast without full game state — they are
+# deliberately absent here, so the builder skips those markets instead
+# of faking a distribution.
+MLB_BATTER_STAT_MAP = {
+    "player_hits": "H",
+    "player_home_runs": "HR",
+    "player_rbis": "RBI",
+    "player_total_bases": "TB",
+    "player_stolen_bases": "SB",
+    "player_so_batter": "SO",
+}
+MLB_PITCHER_STAT_MAP = {
+    "player_so_pitcher": "SO",
+    "player_outs_recorded": "outs",
+    "player_hits_allowed": "H_allowed",
+}
+
+# Below this many games, the distribution is flagged low-sample — the
+# model will still rank it, but the UI says so out loud (same honesty
+# bar as the NFL degenerate-sides note).
+LOW_SAMPLE_GAMES = 8
+
+
+def game_log_distribution(values: list[float],
+                          half_life_games: float = 12.0) -> dict | None:
+    """Recency-weighted (mean, std, n) from a chronological game log.
+
+    values: oldest -> newest. weight(game) = 0.5 ** (games_ago / half_life).
+    Same shrinkage philosophy as player_distribution: tiny samples get a
+    widened std so the model doesn't overreact, plus an explicit
+    low_sample flag when n < LOW_SAMPLE_GAMES.
+    """
+    vals = [float(v) for v in values if v is not None]
+    n = len(vals)
+    if n == 0:
+        return None
+    weights = [0.5 ** ((n - 1 - i) / half_life_games) for i in range(n)]
+    wsum = sum(weights)
+    mean = sum(v * w for v, w in zip(vals, weights)) / wsum
+    var = sum(w * (v - mean) ** 2 for v, w in zip(vals, weights)) / wsum
+    std = math.sqrt(max(var, 1e-9))
+    if n < MIN_GAMES:
+        shrink = n / MIN_GAMES
+        std = std / max(shrink, 0.25)
+    out = {"mean": mean, "std": std, "n": n}
+    if n < LOW_SAMPLE_GAMES:
+        out["low_sample"] = True
+        out["sample_flag"] = (f"Small sample ({n} games) — treat this "
+                              f"projection with extra caution.")
+    return out
+
 MIN_GAMES = 4  # below this, shrink hard toward the position baseline
 HALF_LIFE_WEEKS = 8.0
 

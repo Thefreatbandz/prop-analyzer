@@ -18,6 +18,19 @@ CATEGORY_MARKETS = {
     "Rec Yds": ["player_rec_yds"],
     "Receptions": ["player_receptions"],
     "TDs": ["player_pass_tds", "player_rush_tds", "player_rec_tds"],
+    # NBA
+    "Points": ["player_points"],
+    "Rebounds": ["player_rebounds"],
+    "Assists": ["player_assists"],
+    "Threes": ["player_threes"],
+    "Steals": ["player_steals"],
+    "Blocks": ["player_blocks"],
+    # MLB
+    "Hits": ["player_hits"],
+    "Home Runs": ["player_home_runs"],
+    "RBIs": ["player_rbis"],
+    "Total Bases": ["player_total_bases"],
+    "Strikeouts": ["player_so_batter", "player_so_pitcher"],
 }
 
 # Plain-English labels for markets (no jargon on the cards).
@@ -153,7 +166,7 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
                       hit_html: str = "", cold_html: str = "",
                       photo_b64: str | None = None, jersey: str | None = None,
                       position: str | None = None, team: str | None = None,
-                      negative: bool = False) -> str:
+                      sport: str = "nfl", negative: bool = False) -> str:
     """Full trading-card HTML for a prop pick.
 
     Photo (or initials fallback) + jersey-number badge up top, then the
@@ -166,7 +179,8 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
     primary (or secondary when the primary is unreadably dark), plus a
     faint secondary tint wash. Unknown team -> default gold-on-charcoal.
     Colors are accents only — body text never changes, so every card
-    stays readable.
+    stays readable. sport ("nfl"/"nba"/"mlb") picks the color table —
+    abbreviations collide across leagues (MIA).
     """
     from teams import colors as _tcolors
 
@@ -192,7 +206,7 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
     # gold-on-charcoal card when the team is unknown.
     card_style = ""
     badge_style = ""
-    accent = _tcolors.team_accent(team or p.get("team"))
+    accent = _tcolors.team_accent(team or p.get("team"), sport=sport)
     if accent:
         accent_color, tint = accent
         parts = [f"border-color:{accent_color}",

@@ -125,10 +125,11 @@ def test_get_player_props_skips_final_games(monkeypatch):
         {"id": 1, "name": "A at B", "status": "final"},
         {"id": 2, "name": "C at D", "status": "scheduled"},
     ]
-    monkeypatch.setattr(lumify, "list_events", lambda: events)
+    monkeypatch.setattr(lumify, "list_events",
+                        lambda status="scheduled", sport="nfl": events)
     seen = {}
 
-    def fake_fetch(event_id, force=False):
+    def fake_fetch(event_id, sport="nfl", force=False):
         seen["id"] = event_id
         return {"props": [], "available": True}
 
@@ -143,6 +144,7 @@ def test_get_player_props_no_upcoming_is_honest(monkeypatch):
     monkeypatch.setenv("LUMIFY_API_KEY", "test-key")
     monkeypatch.setattr(
         lumify, "list_events",
-        lambda: [{"id": 1, "name": "A at B", "status": "final"}])
+        lambda status="scheduled", sport="nfl":
+        [{"id": 1, "name": "A at B", "status": "final"}])
     out = lumify.get_player_props()
     assert out["props"] == [] and "note" in out

@@ -117,8 +117,10 @@ def test_get_player_props_finds_scheduled_game(monkeypatch):
         {"id": 19689, "name": "Tampa Bay Buccaneers at Dallas Cowboys",
          "status": "scheduled"},
     ]
-    monkeypatch.setattr(lumify, "list_events", lambda: events)
-    monkeypatch.setattr(lumify, "fetch_props", lambda eid, force=False: LIVE_BOARD)
+    monkeypatch.setattr(lumify, "list_events",
+                        lambda status="scheduled", sport="nfl": events)
+    monkeypatch.setattr(lumify, "fetch_props",
+                        lambda eid, sport="nfl", force=False: LIVE_BOARD)
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
     board = lumify.get_player_props()
     assert board["event_id"] == "19689"

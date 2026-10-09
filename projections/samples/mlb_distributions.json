@@ -1,0 +1,44 @@
+{
+ "projections": {
+  "Aaron Judge": {
+   "player_hits": {
+    "mean": 0.8284709322102729,
+    "std": 0.8071342652971644,
+    "n": 246
+   },
+   "player_home_runs": {
+    "mean": 0.21734790398434028,
+    "std": 0.44091065503601423,
+    "n": 246
+   }
+  },
+  "Jose Ramirez": {
+   "player_total_bases": {
+    "mean": 1.5230277140562678,
+    "std": 1.7711430062036815,
+    "n": 310
+   }
+  },
+  "Gerrit Cole": {
+   "player_so_pitcher": {
+    "mean": 5.614089281679714,
+    "std": 2.391568771417133,
+    "n": 26
+   }
+  },
+  "Andrew Benintendi": {
+   "player_rbis": {
+    "mean": 0.5715776329574475,
+    "std": 0.9120231386660095,
+    "n": 276
+   }
+  },
+  "Shane Bieber": {
+   "player_outs_recorded": {
+    "mean": 14.550132137001444,
+    "std": 5.100550656528284,
+    "n": 23
+   }
+  }
+ }
+}

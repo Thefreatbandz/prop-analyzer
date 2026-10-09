@@ -1,4 +1,4 @@
-"""Lumify adapter — NFL player props across books.
+"""Lumify adapter — player props across books, multi-sport (NFL/NBA/MLB).
 
 Docs: https://lumify.ai/docs  (see also their nfl-api.md on GitHub)
 Free tier: 1,000 credits that never expire — enough to bootstrap v1.
@@ -22,6 +22,8 @@ BASE = "https://lumify.ai/v1"
 # 6h TTL, refreshed on demand on game days.
 TTL_SECONDS = 6 * 60 * 60
 
+SPORTS = ("nfl", "nba", "mlb")
+
 
 def _key() -> str | None:
     return os.environ.get("LUMIFY_API_KEY") or None
@@ -31,22 +33,31 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {_key()}"}
 
 
-def load_sample() -> dict:
+def _check_sport(sport: str) -> str:
+    s = (sport or "nfl").lower()
+    if s not in SPORTS:
+        raise ValueError(f"unsupported sport {sport!r} — pick one of {SPORTS}")
+    return s
+
+
+def load_sample(sport: str = "nfl") -> dict:
     """Sample props board — lets the whole pipeline run with zero keys."""
-    path = os.path.join(os.path.dirname(__file__), "samples", "nfl_player_props.json")
+    sport = _check_sport(sport)
+    path = os.path.join(os.path.dirname(__file__), "samples", f"{sport}_player_props.json")
     with open(path) as f:
         return json.load(f)
 
 
-def list_events(status: str = "scheduled") -> list[dict]:
-    """NFL events (cheap: 1 credit). Each has an id for props pulls.
+def list_events(status: str = "scheduled", sport: str = "nfl") -> list[dict]:
+    """Events (cheap: 1 credit). Each has an id for props pulls.
 
     Defaults to status="scheduled" — without it the endpoint returns the most
     recent finals, so an "upcoming games" call would find nothing to scan.
     """
+    sport = _check_sport(sport)
     if not _key():
         raise RuntimeError("LUMIFY_API_KEY is not set.")
-    params = {"sport": "nfl"}
+    params = {"sport": sport}
     if status:
         params["status"] = status
     r = requests.get(f"{BASE}/events", params=params, headers=_headers(), timeout=30)
@@ -55,8 +66,9 @@ def list_events(status: str = "scheduled") -> list[dict]:
     return data.get("events", data if isinstance(data, list) else [])
 
 
-def fetch_props(event_id: str, force: bool = False) -> dict:
+def fetch_props(event_id: str, sport: str = "nfl", force: bool = False) -> dict:
     """Player props for one event. Cached HARD — 1 credit per event with lines."""
+    sport = _check_sport(sport)
     if not _key():
         raise RuntimeError("LUMIFY_API_KEY is not set — call load_sample() instead.")
 
@@ -67,19 +79,21 @@ def fetch_props(event_id: str, force: bool = False) -> dict:
         r.raise_for_status()
         return r.json()
 
-    return cached_get("lumify", f"nfl_props_{event_id}", TTL_SECONDS, _fetch, force=force)
+    return cached_get("lumify", f"{sport}_props_{event_id}", TTL_SECONDS, _fetch, force=force)
 
 
-def get_player_props(event_id: str | None = None, force: bool = False) -> dict:
+def get_player_props(event_id: str | None = None, sport: str = "nfl",
+                     force: bool = False) -> dict:
     """Props board, live if we have a key, sample data otherwise.
 
     With a key and no event_id: lists events, then pulls props only for the
     first upcoming event (keeps credit burn tiny on the free tier).
     """
+    sport = _check_sport(sport)
     if not _key():
-        return load_sample()
+        return load_sample(sport)
     if event_id is None:
-        events = list_events()
+        events = list_events(sport=sport)
         # Skip completed games: props only exist for upcoming events.
         # (Events list in chronological order; finals sit at the top
         # early in the week before books post the next slate.)
@@ -87,9 +101,9 @@ def get_player_props(event_id: str | None = None, force: bool = False) -> dict:
                     if (e.get("status") or "").lower() != "final"]
         if not upcoming:
             return {"props": [],
-                    "note": "no upcoming NFL games right now"}
+                    "note": f"no upcoming {sport.upper()} games right now"}
         event_id = upcoming[0].get("id")
-    return fetch_props(event_id, force=force)
+    return fetch_props(event_id, sport=sport, force=force)
 
 
 # Live Lumify market keys -> the canonical player_* keys our projection
@@ -98,29 +112,90 @@ def get_player_props(event_id: str | None = None, force: bool = False) -> dict:
 # "touchdowns") keep their raw key and are skipped honestly by the engine —
 # never silently mis-mapped.
 LIVE_MARKET_MAP = {
-    "passing_yards": "player_pass_yds",
-    "passing_tds": "player_pass_tds",
-    "rushing_yards": "player_rush_yds",
-    "receiving_yards": "player_rec_yds",
-    "receptions": "player_receptions",
-    "rushing_tds": "player_rush_tds",
-    "receiving_tds": "player_rec_tds",
+    "nfl": {
+        "passing_yards": "player_pass_yds",
+        "passing_tds": "player_pass_tds",
+        "rushing_yards": "player_rush_yds",
+        "receiving_yards": "player_rec_yds",
+        "receptions": "player_receptions",
+        "rushing_tds": "player_rush_tds",
+        "receiving_tds": "player_rec_tds",
+    },
+    "nba": {
+        "points": "player_points",
+        "rebounds": "player_rebounds",
+        "assists": "player_assists",
+        "threes": "player_threes",
+        "three_pointers": "player_threes",
+        "steals": "player_steals",
+        "blocks": "player_blocks",
+        "points_rebounds_assists": "player_pra",
+        "pra": "player_pra",
+    },
+    "mlb": {
+        "hits": "player_hits",
+        "home_runs": "player_home_runs",
+        "rbis": "player_rbis",
+        "runs": "player_runs",
+        "total_bases": "player_total_bases",
+        "hits_runs_rbis": "player_hits_runs_rbis",
+        "stolen_bases": "player_stolen_bases",
+        "strikeouts_batter": "player_so_batter",
+        "strikeouts_pitcher": "player_so_pitcher",
+        "earned_runs": "player_earned_runs",
+        "outs_recorded": "player_outs_recorded",
+        "hits_allowed": "player_hits_allowed",
+    },
 }
 
 LIVE_MARKET_LABELS = {
-    "passing_yards": "Passing Yards",
-    "passing_tds": "Passing TDs",
-    "passing_attempts": "Pass Attempts",
-    "passing_completions": "Completions",
-    "rushing_yards": "Rushing Yards",
-    "receiving_yards": "Receiving Yards",
-    "receptions": "Receptions",
-    "rushing_tds": "Rushing TDs",
-    "receiving_tds": "Receiving TDs",
-    "touchdowns": "Touchdowns",
-    "pass_rush_yards": "Pass + Rush Yards",
-    "interceptions": "Interceptions",
+    "nfl": {
+        "passing_yards": "Passing Yards",
+        "passing_tds": "Passing TDs",
+        "passing_attempts": "Pass Attempts",
+        "passing_completions": "Completions",
+        "rushing_yards": "Rushing Yards",
+        "receiving_yards": "Receiving Yards",
+        "receptions": "Receptions",
+        "rushing_tds": "Rushing TDs",
+        "receiving_tds": "Receiving TDs",
+        "touchdowns": "Touchdowns",
+        "pass_rush_yards": "Pass + Rush Yards",
+        "interceptions": "Interceptions",
+    },
+    "nba": {
+        "points": "Points",
+        "rebounds": "Rebounds",
+        "assists": "Assists",
+        "threes": "Three-Pointers",
+        "three_pointers": "Three-Pointers",
+        "steals": "Steals",
+        "blocks": "Blocks",
+        "points_rebounds_assists": "Pts+Reb+Ast",
+        "pra": "Pts+Reb+Ast",
+    },
+    "mlb": {
+        "hits": "Hits",
+        "home_runs": "Home Runs",
+        "rbis": "RBIs",
+        "runs": "Runs",
+        "total_bases": "Total Bases",
+        "hits_runs_rbis": "Hits+Runs+RBIs",
+        "stolen_bases": "Stolen Bases",
+        "strikeouts_batter": "Strikeouts (Batter)",
+        "strikeouts_pitcher": "Strikeouts (Pitcher)",
+        "earned_runs": "Earned Runs",
+        "outs_recorded": "Outs Recorded",
+        "hits_allowed": "Hits Allowed",
+    },
 }
+
+def _market_map(sport: str) -> dict:
+    return LIVE_MARKET_MAP.get(_check_sport(sport), {})
+
+
+def _market_labels(sport: str) -> dict:
+    return LIVE_MARKET_LABELS.get(_check_sport(sport), {})
 
 
 def _norm_books_dict(raw_books: dict, line) -> list[dict]:
@@ -156,7 +231,7 @@ def _norm_books_list(raw_books: list) -> list[dict]:
     return books
 
 
-def normalize(payload: dict) -> list[dict]:
+def normalize(payload: dict, sport: str = "nfl") -> list[dict]:
     """Flatten to one row per player-market.
 
     Returns: [{player, team, market, label,
@@ -166,6 +241,9 @@ def normalize(payload: dict) -> list[dict]:
     prop level, and uses short market keys (passing_yards, ...) which are
     mapped to the canonical player_* keys the model understands.
     """
+    sport = _check_sport(sport)
+    market_map = _market_map(sport)
+    market_labels = _market_labels(sport)
     props = payload.get("props") or payload.get("player_props") or []
     out = []
     for p in props:
@@ -175,8 +253,8 @@ def normalize(payload: dict) -> list[dict]:
         else:
             books = _norm_books_list(raw_books or p.get("bookmakers", []))
         raw_market = p.get("market") or p.get("market_key")
-        market = LIVE_MARKET_MAP.get(raw_market, raw_market)
-        label = p.get("label") or LIVE_MARKET_LABELS.get(raw_market) or raw_market
+        market = market_map.get(raw_market, raw_market)
+        label = p.get("label") or market_labels.get(raw_market) or raw_market
         out.append(
             {
                 "player": p.get("player") or p.get("player_name"),

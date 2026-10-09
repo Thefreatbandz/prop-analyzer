@@ -67,6 +67,121 @@ NAME_TO_ABBR: dict[str, str] = {
 # team_accent() resolves these so Rams cards keep their colors.
 ABBR_ALIASES = {"LA": "LAR"}
 
+# NBA: 30 teams, (primary, secondary) from each club's public brand guide.
+NBA_COLORS: dict[str, tuple[str, str]] = {
+    "ATL": ("#E03A3E", "#C1D32F"),  # Hawks
+    "BOS": ("#007A33", "#BA9653"),  # Celtics
+    "BKN": ("#000000", "#FFFFFF"),  # Nets
+    "CHA": ("#1D1160", "#00788C"),  # Hornets
+    "CHI": ("#CE1141", "#000000"),  # Bulls
+    "CLE": ("#860038", "#FDBB30"),  # Cavaliers
+    "DAL": ("#00538C", "#002B5E"),  # Mavericks
+    "DEN": ("#0E2240", "#FEC524"),  # Nuggets
+    "DET": ("#C8102E", "#1D42BA"),  # Pistons
+    "GS": ("#1D428A", "#FFC72C"),   # Warriors (nba_api uses GS)
+    "GSW": ("#1D428A", "#FFC72C"),  # Warriors (alt abbr)
+    "HOU": ("#CE1141", "#000000"),  # Rockets
+    "IND": ("#002D62", "#FDBB30"),  # Pacers
+    "LAC": ("#C8102E", "#1D428A"),  # Clippers
+    "LAL": ("#552583", "#FDB927"),  # Lakers
+    "MEM": ("#5D76A9", "#12173F"),  # Grizzlies
+    "MIA": ("#98002E", "#F9A01B"),  # Heat
+    "MIL": ("#00471B", "#EEE1C6"),  # Bucks
+    "MIN": ("#0C2340", "#78BE20"),  # Timberwolves
+    "NO": ("#0C2340", "#C8102E"),   # Pelicans
+    "NOP": ("#0C2340", "#C8102E"),  # Pelicans (alt abbr)
+    "NY": ("#006BB6", "#F58420"),   # Knicks (nba_api uses NY)
+    "NYK": ("#006BB6", "#F58420"),  # Knicks (alt abbr)
+    "OKC": ("#007AC1", "#EF3B24"),  # Thunder
+    "ORL": ("#0077C0", "#C4CED4"),  # Magic
+    "PHI": ("#006BB6", "#ED174C"),  # 76ers
+    "PHX": ("#1D1160", "#E56020"),  # Suns
+    "POR": ("#E03A3E", "#000000"),  # Trail Blazers
+    "SAC": ("#5A2D81", "#63727A"),  # Kings
+    "SA": ("#C4CED4", "#000000"),   # Spurs (nba_api uses SA)
+    "SAS": ("#C4CED4", "#000000"),  # Spurs (alt abbr)
+    "TOR": ("#CE1141", "#000000"),  # Raptors
+    "UTA": ("#002B5C", "#F9A01B"),  # Jazz
+    "WAS": ("#002B5C", "#E31837"),  # Wizards
+}
+
+NBA_NAME_TO_ABBR = {
+    "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI",
+    "Cleveland Cavaliers": "CLE", "Dallas Mavericks": "DAL",
+    "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+    "Golden State Warriors": "GS", "Houston Rockets": "HOU",
+    "Indiana Pacers": "IND", "Los Angeles Clippers": "LAC",
+    "Los Angeles Lakers": "LAL", "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA", "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN", "New Orleans Pelicans": "NO",
+    "New York Knicks": "NY", "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL", "Philadelphia 76ers": "PHI",
+    "Phoenix Suns": "PHX", "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC", "San Antonio Spurs": "SA",
+    "Toronto Raptors": "TOR", "Utah Jazz": "UTA",
+    "Washington Wizards": "WAS",
+}
+
+# MLB: 30 teams, (primary, secondary) from each club's public brand guide.
+MLB_COLORS: dict[str, tuple[str, str]] = {
+    "ARI": ("#A7194B", "#E3D4AD"),  # Diamondbacks
+    "ATL": ("#CE1148", "#13274F"),  # Braves
+    "BAL": ("#DF4601", "#000000"),  # Orioles
+    "BOS": ("#BD3039", "#0C2340"),  # Red Sox
+    "CHC": ("#0E3386", "#CC3433"),  # Cubs
+    "CWS": ("#27251F", "#C4CED4"),  # White Sox
+    "CHW": ("#27251F", "#C4CED4"),  # White Sox (alt abbr)
+    "CIN": ("#C6011F", "#000000"),  # Reds
+    "CLE": ("#00385D", "#E31937"),  # Guardians
+    "COL": ("#33006F", "#C4CED4"),  # Rockies
+    "DET": ("#0C2340", "#FA4616"),  # Tigers
+    "HOU": ("#EB6E1F", "#002D62"),  # Astros
+    "KC": ("#004687", "#BD9B60"),   # Royals
+    "KCR": ("#004687", "#BD9B60"),  # Royals (alt abbr)
+    "LAA": ("#BA0021", "#003263"),  # Angels
+    "LAD": ("#005A9C", "#FFFFFF"),  # Dodgers
+    "MIA": ("#00A3E0", "#EF3340"),  # Marlins
+    "MIL": ("#FFC52F", "#12284B"),  # Brewers
+    "MIN": ("#002B5C", "#D31145"),  # Twins
+    "NYY": ("#0C2340", "#FFFFFF"),  # Yankees
+    "NYM": ("#002D72", "#FF5910"),  # Mets
+    "ATH": ("#003831", "#EFB21E"),  # Athletics
+    "OAK": ("#003831", "#EFB21E"),  # Athletics (alt abbr)
+    "PHI": ("#E81828", "#002D72"),  # Phillies
+    "PIT": ("#FDB827", "#000000"),  # Pirates
+    "SD": ("#2F241D", "#FFC425"),   # Padres
+    "SDP": ("#2F241D", "#FFC425"),  # Padres (alt abbr)
+    "SF": ("#FD5A1E", "#000000"),   # Giants
+    "SFG": ("#FD5A1E", "#000000"),  # Giants (alt abbr)
+    "SEA": ("#0C2C56", "#005C5C"),  # Mariners
+    "STL": ("#C41E3A", "#0C2340"),  # Cardinals
+    "TB": ("#092C5C", "#8FBCE6"),   # Rays
+    "TBR": ("#092C5C", "#8FBCE6"),  # Rays (alt abbr)
+    "TEX": ("#003278", "#C0111F"),  # Rangers
+    "TOR": ("#134A8E", "#1D2D5C"),  # Blue Jays
+    "WAS": ("#AB0003", "#14225A"),  # Nationals
+    "WSH": ("#AB0003", "#14225A"),  # Nationals (alt abbr)
+}
+
+MLB_NAME_TO_ABBR = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL",
+    "Baltimore Orioles": "BAL", "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC", "Chicago White Sox": "CWS",
+    "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL", "Detroit Tigers": "DET",
+    "Houston Astros": "HOU", "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD",
+    "Miami Marlins": "MIA", "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN", "New York Yankees": "NYY",
+    "New York Mets": "NYM", "Athletics": "ATH", "Oakland Athletics": "OAK",
+    "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT",
+    "San Diego Padres": "SD", "San Francisco Giants": "SF",
+    "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL",
+    "Tampa Bay Rays": "TB", "Texas Rangers": "TEX",
+    "Toronto Blue Jays": "TOR", "Washington Nationals": "WAS",
+}
+
 
 def _luminance(hex_color: str) -> float:
     """Relative luminance 0..1 — used to keep accents visible on charcoal."""
@@ -75,21 +190,27 @@ def _luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def team_accent(team: str | None) -> tuple[str, str] | None:
+def team_accent(team: str | None, sport: str = "nfl") -> tuple[str, str] | None:
     """(accent, tint) for a team abbr ("BUF") or full name ("Buffalo Bills").
 
-    accent: the visible edge color — primary, unless the primary is too
-    dark to read on charcoal (Raiders black), in which case secondary.
-    tint: secondary for the faint background wash, or None when it's
-    near-black (a black wash is invisible anyway).
-    Returns None for unknown teams -> caller falls back to gold.
+    sport picks the color table ("nfl"/"nba"/"mlb") — abbreviations collide
+    across leagues (MIA is Dolphins/Heat/Marlins), so cards must pass their
+    sport. Unknown team or sport -> None -> caller falls back to gold.
     """
     if not team or not isinstance(team, str):
         return None
-    abbr = NAME_TO_ABBR.get(team.strip(), team.strip().upper())
-    # "LA" (nflverse's Rams abbr) -> "LAR" (canonical key).
-    abbr = ABBR_ALIASES.get(abbr, abbr)
-    colors = TEAM_COLORS.get(abbr)
+    sport = (sport or "nfl").lower()
+    if sport == "nba":
+        colors_table, name_table = NBA_COLORS, NBA_NAME_TO_ABBR
+    elif sport == "mlb":
+        colors_table, name_table = MLB_COLORS, MLB_NAME_TO_ABBR
+    else:
+        colors_table, name_table = TEAM_COLORS, NAME_TO_ABBR
+    abbr = name_table.get(team.strip(), team.strip().upper())
+    if sport == "nfl":
+        # "LA" (nflverse's Rams abbr) -> "LAR" (canonical key).
+        abbr = ABBR_ALIASES.get(abbr, abbr)
+    colors = colors_table.get(abbr)
     if not colors:
         return None
     primary, secondary = colors

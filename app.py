@@ -353,42 +353,52 @@ def key_status() -> dict:
     }
 
 
-def _load_dists(model_mode: str) -> dict:
+def _load_dists(model_mode: str, sport: str = "nfl") -> dict:
     # Learn mode: the model ("how good is this player lately?") lives in
     # two places. "sample" = bundled demo projections (works offline).
     # "live" = projections/live_distributions.json, built by
     # `python -m projections.build` from real nflverse data.
-    if model_mode == "live":
+    # NBA/MLB use their own sample files; live builds are a later step.
+    sport = (sport or "nfl").lower()
+    if model_mode == "live" and sport == "nfl":
         live_path = os.path.join("projections", "live_distributions.json")
         if os.path.exists(live_path):
             with open(live_path) as f:
                 return json.load(f)
         return {}
-    with open(os.path.join("projections", "samples",
-                           "player_distributions.json")) as f:
+    fname = {"nfl": "player_distributions.json",
+             "nba": "nba_distributions.json",
+             "mlb": "mlb_distributions.json"}.get(sport, "player_distributions.json")
+    with open(os.path.join("projections", "samples", fname)) as f:
         return json.load(f)["projections"]
 
 
 @st.cache_data(show_spinner="Pulling props board...")
-def _live_board():
+def _live_board(sport: str = "nfl"):
     # The raw normalized board (with per-book lines), for the alerts
     # snapshot/check. Same graceful rules as run_scan: live when keyed,
     # sample data on failure — and the note says which.
+    sport = (sport or "nfl").lower()
     try:
-        board = lumify.normalize(lumify.get_player_props())
+        board = lumify.normalize(lumify.get_player_props(sport=sport), sport=sport)
         note = None
     except Exception:
-        board = lumify.normalize(lumify.load_sample())
+        board = lumify.normalize(lumify.load_sample(sport), sport=sport)
         # User-safe copy (see run_scan): no exception types for the public.
         note = "Couldn't reach the live props feed — showing sample data."
     return board, note
 
 
 @st.cache_data(show_spinner="Running EV scan...")
-def run_scan(model_mode: str, min_ev_pct: float):
+def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
+    sport = (sport or "nfl").lower()
     # Moneylines degrade gracefully: no key or dead API -> clear notice,
     # props-only scan. The adapter stays intact for when a key arrives.
-    ml_games, ml_note = the_odds_api.get_moneylines_strict()
+    # (Moneylines are NFL-only for now.)
+    if sport == "nfl":
+        ml_games, ml_note = the_odds_api.get_moneylines_strict()
+    else:
+        ml_games, ml_note = [], None
     ml_picks = engine.rank_moneylines(ml_games, min_ev=min_ev_pct / 100)
     # Props are the live source right now (Lumify). If the pull fails
     # (dead API, bad key), fall back to sample data and say so — a dead
@@ -399,35 +409,48 @@ def run_scan(model_mode: str, min_ev_pct: float):
     props_note = None
     board_empty_live = False
     try:
-        raw_props = lumify.get_player_props()
-        props = lumify.normalize(raw_props)
+        raw_props = lumify.get_player_props(sport=sport)
+        props = lumify.normalize(raw_props, sport=sport)
         if not os.environ.get("LUMIFY_API_KEY"):
             # get_player_props() silently served the bundled sample —
             # label it honestly so nobody mistakes it for the live board.
-            props_note = ("Showing sample props — add your Lumify key in the "
-                          "app's Secrets (LUMIFY_API_KEY) for the live board.")
+            props_note = (f"Showing sample {sport.upper()} props — add your Lumify key "
+                          "in the app's Secrets (LUMIFY_API_KEY) for the live board.")
         elif not props:
             board_empty_live = True
-            props_note = ("No upcoming NFL games have posted player props "
-                          "yet — books usually post them on Thursdays. "
-                          "Nothing is hidden; there is just no board right now.")
+            if sport == "nba":
+                props_note = ("No NBA games posted yet — the season starts "
+                              "around Oct 20. Check back then.")
+            else:
+                props_note = (f"No upcoming {sport.upper()} games have posted player "
+                              "props yet. Nothing is hidden; there is just no "
+                              "board right now.")
     except Exception:
-        props = lumify.normalize(lumify.load_sample())
+        props = lumify.normalize(lumify.load_sample(sport), sport=sport)
         # User-safe copy: no exception types for the public. Dev detail
         # (which feed failed) is visible in dev mode via key_status.
         props_note = ("Couldn't reach the live props feed — "
                       "showing sample props for now.")
-    dists = _load_dists(model_mode)
+    dists = _load_dists(model_mode, sport)
     scan_stats: dict = {}
     prop_picks = engine.rank_props(props, dists, min_ev=min_ev_pct / 100,
                                    stats=scan_stats)
+    # Tag every pick with its sport so cards render the right team colors,
+    # and surface the low-sample honesty flag on the pick itself.
+    for _p in prop_picks:
+        _p["sport"] = sport
+        _d = dists.get(_p["player"], {}).get(_p["market"], {})
+        if _d.get("sample_flag"):
+            _p["sample_flag"] = _d["sample_flag"]
+    for _p in ml_picks:
+        _p["sport"] = sport
     degenerate = scan_stats.get("degenerate_sides", 0)
     if degenerate:
         # The model collapsed to fake certainty (0/1 probability) on these
         # sides — tiny-sample fringe players with near-zero variance.
         # Skipped, never dressed up as edges, and said out loud.
         loud = (f"{degenerate} side(s) skipped — the model had almost no "
-                "NFL data on those players (third-stringers with a few "
+                "data on those players (third-stringers with a few "
                 "identical games), so there was no honest edge to compute.")
         props_note = f"{props_note} {loud}" if props_note else loud
     malformed = scan_stats.get("malformed_props", 0)
@@ -435,19 +458,29 @@ def run_scan(model_mode: str, min_ev_pct: float):
         loud = (f"{malformed} prop(s) skipped — malformed book or model data, "
                 "never fatal to the scan.")
         props_note = f"{props_note} {loud}" if props_note else loud
+    # Low-sample honesty: flag dists built on <8 games, same bar as the
+    # degenerate note above.
+    low_n = sum(1 for _p in prop_picks
+                if dists.get(_p["player"], {}).get(_p["market"], {})
+                .get("low_sample"))
+    if low_n:
+        loud = (f"{low_n} edge(s) are on small samples (<8 games) — "
+                "the model is less sure here. Treat them with extra caution.")
+        props_note = f"{props_note} {loud}" if props_note else loud
     return ml_picks, prop_picks, ml_note, props_note, board_empty_live
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading schedule...")
-def _upcoming_games():
+def _upcoming_games(sport: str = "nfl"):
     # The schedule strip on the Scan tab. Same Lumify events feed the
     # props scanner uses (1 credit), parsed into display dicts by
     # games.schedule. Any failure -> friendly fallback, never a crash,
     # never key material in the UI.
+    sport = (sport or "nfl").lower()
     try:
         from games import schedule as gsched
 
-        events = lumify.list_events(status="scheduled")
+        events = lumify.list_events(status="scheduled", sport=sport)
         games = gsched.parse_events(events)
         # Today's games first — that's what Tbandz asked to see.
         games.sort(key=lambda g: (not g["is_today"],
@@ -459,15 +492,18 @@ def _upcoming_games():
 
 
 @st.cache_data(show_spinner="Scanning fades...")
-def run_fades(model_mode: str, max_neg_ev_pct: float):
+def run_fades(model_mode: str, max_neg_ev_pct: float, sport: str = "nfl"):
     # The spots to stay away from: props priced against you. Reuses the
     # cached board (no second odds pull) and the same distributions.
     # Returns the most negative EV flags, worst first. NOT picks.
-    board, _note = _live_board()
-    dists = _load_dists(model_mode)
+    sport = (sport or "nfl").lower()
+    board, _note = _live_board(sport)
+    dists = _load_dists(model_mode, sport)
     fade_stats: dict = {}
     fades = engine.rank_fades(board, dists, max_ev=max_neg_ev_pct / 100,
                               stats=fade_stats)
+    for _f in fades:
+        _f["sport"] = sport
     fade_note = None
     if fade_stats.get("degenerate_sides"):
         fade_note = (f"{fade_stats['degenerate_sides']} side(s) skipped — "
@@ -664,7 +700,7 @@ def _render_player_spotlight(name: str, team: str | None):
 # ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("Prop Analyzer")
-    st.caption("NFL player props + moneyline EV scanner (v1)")
+    st.caption("Player props + moneyline EV scanner (v1)")
     # Key presence is computed for the mode label below, but key NAMES
     # only render in dev mode — the public never sees them.
     keys = key_status()
@@ -675,6 +711,31 @@ with st.sidebar:
                         f"{'set' if v else 'missing — sample mode'}</span>",
                         unsafe_allow_html=True)
         st.divider()
+    # Sport selector: segmented control with sport-specific accent colors.
+    # NFL gold (brand), NBA orange (ball), MLB red (stitches).
+    _sport_choice = st.segmented_control(
+        "Sport", ["NFL", "NBA", "MLB"], default="NFL",
+        key="sport_selector", label_visibility="collapsed")
+    sport = (_sport_choice or "NFL").lower()
+    _sport_accents = {"nfl": "#C9A227", "nba": "#F58420", "mlb": "#E31837"}
+    st.markdown(
+        f"""<style>
+        div[data-testid="stSegmentedControl"] button[kind="secondary"] {{
+            border-color: {_sport_accents.get(sport, "#C9A227")}55 !important;
+        }}
+        div[data-testid="stSegmentedControl"] button[kind="secondary"][data-active="true"] {{
+            border-color: {_sport_accents.get(sport, "#C9A227")} !important;
+            box-shadow: 0 0 12px {_sport_accents.get(sport, "#C9A227")}44 !important;
+        }}
+        .sport-badge {{
+            display: inline-block; padding: 2px 10px; border-radius: 999px;
+            font-size: 11px; font-weight: 700; letter-spacing: 1px;
+            border: 1px solid {_sport_accents.get(sport, "#C9A227")};
+            color: {_sport_accents.get(sport, "#C9A227")};
+            margin-bottom: 6px;
+        }}
+        </style>""",
+        unsafe_allow_html=True)
     model_mode = st.radio("Projection model", ["sample", "live"],
                           help="'live' uses projections/live_distributions.json "
                                "(build with: python -m projections.build)")
@@ -689,7 +750,7 @@ mode_label = "SAMPLE DATA" if not any(keys.values()) else "LIVE ODDS"
 st.caption(f"Mode: **{mode_label}** · model: {model_mode}")
 
 ml_picks, prop_picks, ml_note, props_note, board_empty_live = run_scan(
-    model_mode, min_ev)
+    model_mode, min_ev, sport)
 all_picks = prop_picks + ml_picks
 
 # ---------- Global player search (sidebar) ----------
@@ -722,6 +783,8 @@ with st.sidebar:
 
 # ---------------- Scan (home) ----------------
 with tab_scan:
+    st.markdown(f"<span class='sport-badge'>{sport.upper()}</span>",
+                unsafe_allow_html=True)
     if ml_note:
         st.info(ml_note)
     # The empty-board note renders in the empty state below (as info),
@@ -730,7 +793,7 @@ with tab_scan:
         st.warning(props_note)
 
     # --- This week: upcoming games, today's games pinned first ---
-    _games, _games_note = _upcoming_games()
+    _games, _games_note = _upcoming_games(sport)
     if _games:
         _n_today = sum(1 for g in _games if g["is_today"])
         _hdr = "**This week**"
@@ -749,12 +812,15 @@ with tab_scan:
     # --- Suggested players strip: 100% data-driven (top EV + trending).
     # Nothing here is anyone's opinion — every suggestion carries its
     # reason string. Tapping one filters the cards below to that player.
-    try:
-        from players import suggest as psuggest
+    # (NFL-only for now: suggestions need the NFL news + roster feeds.)
+    _sugs = []
+    if sport == "nfl":
+        try:
+            from players import suggest as psuggest
 
-        _sugs = psuggest.suggestions(prop_picks, _espn_news(), _rosters_df())
-    except Exception:
-        _sugs = []
+            _sugs = psuggest.suggestions(prop_picks, _espn_news(), _rosters_df())
+        except Exception:
+            _sugs = []
     if _sugs:
         st.markdown("**Worth a look this week**")
         st.caption("Hand-picked by the data — this week's sharpest +EV props "
@@ -814,8 +880,14 @@ with tab_scan:
             st.rerun()
 
     # --- Chips, not settings pages: stat category, side, form window.
-    _cat = st.pills("Stat", ["All", "Pass Yds", "Rush Yds", "Rec Yds",
-                             "Receptions", "TDs"],
+    # Stat categories are sport-specific; the filter matches on the pick's
+    # market label so it works for every sport.
+    _stat_chips = {
+        "nfl": ["All", "Pass Yds", "Rush Yds", "Rec Yds", "Receptions", "TDs"],
+        "nba": ["All", "Points", "Rebounds", "Assists", "Threes", "Steals", "Blocks"],
+        "mlb": ["All", "Hits", "Home Runs", "RBIs", "Total Bases", "Strikeouts"],
+    }[sport]
+    _cat = st.pills("Stat", _stat_chips,
                     default="All", key="chip_cat",
                     label_visibility="collapsed")
     _cc1, _cc2 = st.columns(2)
@@ -839,7 +911,7 @@ with tab_scan:
 
     picks = ui_cards.filter_picks(all_picks, _cat, _side)
     if _fades_mode:
-        _fades, _fade_note = run_fades(model_mode, min_ev)
+        _fades, _fade_note = run_fades(model_mode, min_ev, sport)
         _fades = ui_cards.filter_picks(_fades, _cat, _side)
         picks = _fades
         if _fade_note:
@@ -850,7 +922,8 @@ with tab_scan:
     # View flow: the spotlight card always renders first, so tapping
     # View on a suggestion never lands on a dead-looking empty state.
     # +EV props (or the honest "priced right" note) follow below.
-    if _scan_player:
+    # (NFL-only: the spotlight needs the NFL roster/bio feeds.)
+    if _scan_player and sport == "nfl":
         _render_player_spotlight(_scan_player,
                                  st.session_state.get("scan_player_team"))
 
@@ -905,10 +978,23 @@ with tab_scan:
                     </div>""",
                     unsafe_allow_html=True)
             else:
-                _mu = _matchup_str(p.get("team"))
-                _mu_html = (f" · {_mu}" if _mu
-                            else f" · {html.escape(str(p.get('team', '')))}")
-                _bars, _hit, _cold = _card_form(p, _window)
+                _p_sport = p.get("sport", sport)
+                if _p_sport == "nfl":
+                    _mu = _matchup_str(p.get("team"))
+                    _mu_html = (f" · {_mu}" if _mu
+                                else f" · {html.escape(str(p.get('team', '')))}")
+                    _bars, _hit, _cold = _card_form(p, _window)
+                    _photo = _hs.headshot_b64(p["player"], _rosters_df())
+                    _jersey = _hs.jersey_number(p["player"], _rosters_df())
+                    _pos = _hs.position_abbr(p["player"], _rosters_df())
+                else:
+                    # NBA/MLB cards: team-color accents + initials (no
+                    # headshot CDN wired yet — the initials fallback is
+                    # the honest path), no NFL form bars/matchup strings.
+                    _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
+                                if p.get("team") else "")
+                    _bars, _hit, _cold = "", "", ""
+                    _photo, _jersey, _pos = None, None, None
                 st.markdown(
                     ui_cards.trading_card_html(
                         p,
@@ -916,15 +1002,20 @@ with tab_scan:
                         bars=_bars,
                         hit_html=_hit,
                         cold_html=_cold,
-                        photo_b64=_hs.headshot_b64(p["player"], _rosters_df()),
-                        jersey=_hs.jersey_number(p["player"], _rosters_df()),
-                        position=_hs.position_abbr(p["player"], _rosters_df()),
+                        photo_b64=_photo,
+                        jersey=_jersey,
+                        position=_pos,
+                        sport=_p_sport,
                         negative=_fades_mode,
                     ),
                     unsafe_allow_html=True)
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",
+                            unsafe_allow_html=True)
+            if p.get("sample_flag"):
+                _sflag = html.escape(str(p["sample_flag"]))
+                st.markdown(f"<span class='flag-warn'>{_sflag}</span>",
                             unsafe_allow_html=True)
             if st.button("Details", key=f"det_{i}"):
                 st.session_state["selected_pick"] = p
@@ -1137,8 +1228,14 @@ with tab_detail:
             st.caption(f"Line shopping: best {p['price']:+} vs worst {p['worst_price']:+} "
                        f"— {p['shop_uplift_pct']:+.2f}% payout uplift just for picking the book.")
         else:
+            _p_sport = p.get("sport", "nfl")
+            _window_txt = {
+                "nfl": "2015–present",
+                "nba": "2023-24 – 2025-26",
+                "mlb": "2026 season",
+            }.get(_p_sport, "recent seasons")
             st.caption(f"Projection based on {p.get('n_games', '?')} games "
-                       f"(recency-weighted, 2015–present).")
+                       f"(recency-weighted, {_window_txt}).")
 
 # ---------------- Tracker ----------------
 with tab_tracker:

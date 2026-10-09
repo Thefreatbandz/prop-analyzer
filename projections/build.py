@@ -64,6 +64,79 @@ def build_distributions(players: list[tuple[str, str, str]],
     return out
 
 
+def build_nba_distributions(players: list[tuple[str, str, str]]) -> dict:
+    """{player: {market: dist-dict}} for NBA props.
+
+    players: (name, team, market) with market in model.NBA_STAT_MAP keys.
+    Uses nba_api game logs (last 3 seasons, recency-weighted). Players with
+    no games (offseason, unknown names) are skipped — never faked.
+    """
+    from projections import nba_data
+
+    out: dict = {}
+    for name, team, market in players:
+        col = model.NBA_STAT_MAP.get(market)
+        if not col:
+            continue
+        try:
+            log = nba_data.player_game_log(name)
+        except Exception:
+            continue
+        if log.height == 0:
+            continue
+        rows = log.to_dicts()  # newest first
+        if col == "PRA":
+            values = [r["PTS"] + r["REB"] + r["AST"] for r in rows]
+        else:
+            values = [r[col] for r in rows]
+        # game_log_distribution wants oldest -> newest.
+        dist = model.game_log_distribution(list(reversed(values)),
+                                           half_life_games=12.0)
+        if not dist:
+            continue
+        try:
+            dist["team"] = log["team_abbr"][0]
+        except Exception:
+            pass
+        out.setdefault(name, {})[market] = dist
+    return out
+
+
+def build_mlb_distributions(players: list[tuple[str, str, str]]) -> dict:
+    """{player: {market: dist-dict}} for MLB props.
+
+    players: (name, team, market) with market in the MLB_*_STAT_MAP keys.
+    Batter markets use statcast-derived game logs; pitcher markets use the
+    pitching log. Markets with no honest data source (runs, earned_runs)
+    are absent from the maps and skipped here.
+    """
+    from projections import mlb_data
+
+    out: dict = {}
+    for name, team, market in players:
+        col = model.MLB_BATTER_STAT_MAP.get(market)
+        log_fn = mlb_data.batter_game_log
+        if col is None:
+            col = model.MLB_PITCHER_STAT_MAP.get(market)
+            log_fn = mlb_data.pitcher_game_log
+        if col is None:
+            continue
+        try:
+            log = log_fn(name)
+        except Exception:
+            continue
+        if log.height == 0:
+            continue
+        rows = log.to_dicts()  # newest first
+        values = [r[col] for r in rows]
+        dist = model.game_log_distribution(list(reversed(values)),
+                                           half_life_games=20.0)
+        if not dist:
+            continue
+        out.setdefault(name, {})[market] = dist
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--week", nargs=2, type=int, metavar=("SEASON", "WEEK"))
