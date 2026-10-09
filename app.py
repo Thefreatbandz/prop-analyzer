@@ -418,7 +418,18 @@ def run_scan(model_mode: str, min_ev_pct: float):
         props_note = ("Couldn't reach the live props feed — "
                       "showing sample props for now.")
     dists = _load_dists(model_mode)
-    prop_picks = engine.rank_props(props, dists, min_ev=min_ev_pct / 100)
+    scan_stats: dict = {}
+    prop_picks = engine.rank_props(props, dists, min_ev=min_ev_pct / 100,
+                                   stats=scan_stats)
+    degenerate = scan_stats.get("degenerate_sides", 0)
+    if degenerate:
+        # The model collapsed to fake certainty (0/1 probability) on these
+        # sides — tiny-sample fringe players with near-zero variance.
+        # Skipped, never dressed up as edges, and said out loud.
+        loud = (f"{degenerate} side(s) skipped — the model had almost no "
+                "NFL data on those players (third-stringers with a few "
+                "identical games), so there was no honest edge to compute.")
+        props_note = f"{props_note} {loud}" if props_note else loud
     return ml_picks, prop_picks, ml_note, props_note, board_empty_live
 
 
@@ -449,7 +460,15 @@ def run_fades(model_mode: str, max_neg_ev_pct: float):
     # Returns the most negative EV flags, worst first. NOT picks.
     board, _note = _live_board()
     dists = _load_dists(model_mode)
-    return engine.rank_fades(board, dists, max_ev=max_neg_ev_pct / 100)
+    fade_stats: dict = {}
+    fades = engine.rank_fades(board, dists, max_ev=max_neg_ev_pct / 100,
+                              stats=fade_stats)
+    fade_note = None
+    if fade_stats.get("degenerate_sides"):
+        fade_note = (f"{fade_stats['degenerate_sides']} side(s) skipped — "
+                     "the model had almost no NFL data on those players, "
+                     "so there was no honest edge to compute.")
+    return fades, fade_note
 
 
 def pick_title(p: dict) -> str:
@@ -815,9 +834,11 @@ with tab_scan:
 
     picks = ui_cards.filter_picks(all_picks, _cat, _side)
     if _fades_mode:
-        _fades = ui_cards.filter_picks(
-            run_fades(model_mode, min_ev), _cat, _side)
+        _fades, _fade_note = run_fades(model_mode, min_ev)
+        _fades = ui_cards.filter_picks(_fades, _cat, _side)
         picks = _fades
+        if _fade_note:
+            st.caption(_fade_note)
     if _scan_player:
         picks = [p for p in picks if p.get("player") == _scan_player]
 

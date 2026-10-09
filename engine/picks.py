@@ -45,14 +45,42 @@ def _best_side(books: list[dict], side: str) -> dict | None:
     return best
 
 
+def _model_prob(dist: dict, side: str, line: float,
+                player: str, market: str, sims: int) -> float | None:
+    """Model's fair probability for one side, or None when degenerate.
+
+    A Monte Carlo probability of exactly 0.0 or 1.0 means the model's
+    distribution is fake-certain — near-zero variance on a tiny sample,
+    typically a fringe player with a few identical games (n=3, std~0).
+    There is no honest EV to compute there (ev_percent would raise), so
+    the caller skips the side and counts it. Noise stays noise; it never
+    becomes a pick.
+    """
+    seed = stable_seed(player, market, side, line)
+    if side == "over":
+        p = prob_over(dist["mean"], dist["std"], line, n=sims, seed=seed)
+    else:
+        p = 1.0 - prob_over(dist["mean"], dist["std"], line, n=sims, seed=seed)
+    if not 0.0 < p < 1.0:
+        return None
+    return p
+
+
 def rank_props(prop_board: list[dict], distributions: dict,
-               min_ev: float = MIN_EV, sims: int = 10_000) -> list[dict]:
+               min_ev: float = MIN_EV, sims: int = 10_000,
+               stats: dict | None = None) -> list[dict]:
     """Rank player props by EV%. distributions: {player: {market: dist}}.
 
     Each pick: {type, player, team, market, label, side, book, line,
                 price, fair_prob, fair_american, ev_pct, ...}
+
+    `stats` (optional dict) is filled with scan diagnostics, including
+    `degenerate_sides`: sides skipped because the model's probability
+    collapsed to exactly 0 or 1 (tiny-sample fringe players — noise,
+    not signal). Callers surface that count loudly; it is never a pick.
     """
     picks = []
+    degenerate = 0
     for prop in prop_board:
         player, market = prop["player"], prop["market"]
         dist = (distributions.get(player) or {}).get(market)
@@ -62,13 +90,10 @@ def rank_props(prop_board: list[dict], distributions: dict,
             best = _best_side(prop["books"], side)
             if not best:
                 continue
-            seed = stable_seed(player, market, side, best["line"])
-            if side == "over":
-                fair_p = prob_over(dist["mean"], dist["std"], best["line"],
-                                   n=sims, seed=seed)
-            else:
-                fair_p = 1.0 - prob_over(dist["mean"], dist["std"],
-                                         best["line"], n=sims, seed=seed)
+            fair_p = _model_prob(dist, side, best["line"], player, market, sims)
+            if fair_p is None:
+                degenerate += 1
+                continue
             ev = ev_percent(fair_p, best["decimal"])
             if ev >= min_ev:
                 picks.append(
@@ -99,6 +124,8 @@ def rank_props(prop_board: list[dict], distributions: dict,
                     }
                 )
     picks.sort(key=lambda p: p["ev_pct"], reverse=True)
+    if stats is not None:
+        stats["degenerate_sides"] = degenerate
     return picks
 
 
@@ -107,7 +134,7 @@ MAX_NEG_EV = -0.02  # fades: only flag edges of at least -2% (priced against you
 
 def rank_fades(prop_board: list[dict], distributions: dict,
                max_ev: float = MAX_NEG_EV, top_n: int = 12,
-               sims: int = 10_000) -> list[dict]:
+               sims: int = 10_000, stats: dict | None = None) -> list[dict]:
     """The spots to AVOID: props priced against you, most negative first.
 
     Same math as rank_props, mirrored: keep sides with ev <= max_ev
@@ -116,8 +143,11 @@ def rank_fades(prop_board: list[dict], distributions: dict,
     cards render unchanged — only the hero metric turns red.
 
     These are NOT picks. The UI labels them "spots to stay away from".
+
+    `stats` (optional dict) reports `degenerate_sides`, same as rank_props.
     """
     fades = []
+    degenerate = 0
     for prop in prop_board:
         player, market = prop["player"], prop["market"]
         dist = (distributions.get(player) or {}).get(market)
@@ -127,13 +157,10 @@ def rank_fades(prop_board: list[dict], distributions: dict,
             best = _best_side(prop["books"], side)
             if not best:
                 continue
-            seed = stable_seed(player, market, side, best["line"])
-            if side == "over":
-                fair_p = prob_over(dist["mean"], dist["std"], best["line"],
-                                   n=sims, seed=seed)
-            else:
-                fair_p = 1.0 - prob_over(dist["mean"], dist["std"],
-                                         best["line"], n=sims, seed=seed)
+            fair_p = _model_prob(dist, side, best["line"], player, market, sims)
+            if fair_p is None:
+                degenerate += 1
+                continue
             ev = ev_percent(fair_p, best["decimal"])
             if ev <= max_ev:
                 fades.append(
@@ -163,6 +190,8 @@ def rank_fades(prop_board: list[dict], distributions: dict,
                     }
                 )
     fades.sort(key=lambda p: p["ev_pct"])  # most negative first
+    if stats is not None:
+        stats["degenerate_sides"] = degenerate
     return fades[:top_n]
 
 
