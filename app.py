@@ -401,7 +401,12 @@ def run_scan(model_mode: str, min_ev_pct: float):
     try:
         raw_props = lumify.get_player_props()
         props = lumify.normalize(raw_props)
-        if not props and os.environ.get("LUMIFY_API_KEY"):
+        if not os.environ.get("LUMIFY_API_KEY"):
+            # get_player_props() silently served the bundled sample —
+            # label it honestly so nobody mistakes it for the live board.
+            props_note = ("Showing sample props — add your Lumify key in the "
+                          "app's Secrets (LUMIFY_API_KEY) for the live board.")
+        elif not props:
             board_empty_live = True
             props_note = ("No upcoming NFL games have posted player props "
                           "yet — books usually post them on Thursdays. "
