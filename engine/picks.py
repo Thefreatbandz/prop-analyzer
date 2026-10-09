@@ -56,6 +56,8 @@ def _model_prob(dist: dict, side: str, line: float,
     the caller skips the side and counts it. Noise stays noise; it never
     becomes a pick.
     """
+    if dist.get("mean") is None or dist.get("std") is None:
+        return None  # no data at all — same as a collapsed probability
     seed = stable_seed(player, market, side, line)
     if side == "over":
         p = prob_over(dist["mean"], dist["std"], line, n=sims, seed=seed)
@@ -81,51 +83,59 @@ def rank_props(prop_board: list[dict], distributions: dict,
     """
     picks = []
     degenerate = 0
+    malformed = 0
     for prop in prop_board:
-        player, market = prop["player"], prop["market"]
-        dist = (distributions.get(player) or {}).get(market)
-        if not dist or dist.get("do_not_bet"):
-            continue  # no projection, or player is OUT — skip loudly elsewhere
-        for side in ("over", "under"):
-            best = _best_side(prop["books"], side)
-            if not best:
-                continue
-            fair_p = _model_prob(dist, side, best["line"], player, market, sims)
-            if fair_p is None:
-                degenerate += 1
-                continue
-            ev = ev_percent(fair_p, best["decimal"])
-            if ev >= min_ev:
-                picks.append(
-                    {
-                        "type": "prop",
-                        "player": player,
-                        "team": prop.get("team"),
-                        "market": market,
-                        "label": prop.get("label", market),
-                        "side": side,
-                        "book": best["book"],
-                        "line": best["line"],
-                        "price": best["price"],
-                        "fair_prob": round(fair_p, 4),
-                        "fair_american": round(fair_odds_american(fair_p)),
-                        "ev_pct": round(ev * 100, 2),
-                        "n_games": dist.get("n"),
-                        "injury_flag": dist.get("injury_flag"),
-                        # The math, shown in the dashboard (Learn mode):
-                        "math": (
-                            f"Model: {player} {prop.get('label', market)} "
-                            f"~ N({dist['mean']:.1f}, {dist['std']:.1f}) over "
-                            f"{dist.get('n', '?')} games → P({side} {best['line']}) = "
-                            f"{fair_p:.1%}. Book pays {best['price']} "
-                            f"({best['decimal']:.3f}x). "
-                            f"EV = {fair_p:.3f} × {best['decimal']:.3f} − 1 = {ev:+.1%}."
-                        ),
-                    }
-                )
+        try:
+            player, market = prop["player"], prop["market"]
+            dist = (distributions.get(player) or {}).get(market)
+            if not dist or dist.get("do_not_bet"):
+                continue  # no projection, or player is OUT — skip loudly elsewhere
+            for side in ("over", "under"):
+                best = _best_side(prop["books"], side)
+                if not best:
+                    continue
+                fair_p = _model_prob(dist, side, best["line"], player, market, sims)
+                if fair_p is None:
+                    degenerate += 1
+                    continue
+                ev = ev_percent(fair_p, best["decimal"])
+                if ev >= min_ev:
+                    picks.append(
+                        {
+                            "type": "prop",
+                            "player": player,
+                            "team": prop.get("team"),
+                            "market": market,
+                            "label": prop.get("label", market),
+                            "side": side,
+                            "book": best["book"],
+                            "line": best["line"],
+                            "price": best["price"],
+                            "fair_prob": round(fair_p, 4),
+                            "fair_american": round(fair_odds_american(fair_p)),
+                            "ev_pct": round(ev * 100, 2),
+                            "n_games": dist.get("n"),
+                            "injury_flag": dist.get("injury_flag"),
+                            # The math, shown in the dashboard (Learn mode):
+                            "math": (
+                                f"Model: {player} {prop.get('label', market)} "
+                                f"~ N({dist['mean']:.1f}, {dist['std']:.1f}) over "
+                                f"{dist.get('n', '?')} games → P({side} {best['line']}) = "
+                                f"{fair_p:.1%}. Book pays {best['price']} "
+                                f"({best['decimal']:.3f}x). "
+                                f"EV = {fair_p:.3f} × {best['decimal']:.3f} − 1 = {ev:+.1%}."
+                            ),
+                        }
+                    )
+        except Exception:
+            # One malformed prop (bad line, bad price, broken dist) never
+            # kills the whole scan — skip it, count it, say it out loud.
+            malformed += 1
+            continue
     picks.sort(key=lambda p: p["ev_pct"], reverse=True)
     if stats is not None:
         stats["degenerate_sides"] = degenerate
+        stats["malformed_props"] = malformed
     return picks
 
 

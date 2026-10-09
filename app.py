@@ -430,6 +430,11 @@ def run_scan(model_mode: str, min_ev_pct: float):
                 "NFL data on those players (third-stringers with a few "
                 "identical games), so there was no honest edge to compute.")
         props_note = f"{props_note} {loud}" if props_note else loud
+    malformed = scan_stats.get("malformed_props", 0)
+    if malformed:
+        loud = (f"{malformed} prop(s) skipped — malformed book or model data, "
+                "never fatal to the scan.")
+        props_note = f"{props_note} {loud}" if props_note else loud
     return ml_picks, prop_picks, ml_note, props_note, board_empty_live
 
 

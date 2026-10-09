@@ -76,3 +76,50 @@ def test_healthy_dist_still_flags_edge():
     # stats is optional: omitting it keeps the old call shape working.
     ranked2 = picks_mod.rank_props(board, dists, min_ev=0.0, sims=5000)
     assert len(ranked2) >= 1
+
+
+def test_none_mean_dist_skipped_not_crash():
+    # 2026-10-09 live-app TypeError: a distribution with mean/std None
+    # (fringe player, zero usable games) made _model_prob blow up inside
+    # prob_over (max(None, 1e-9) -> TypeError) and killed the whole scan.
+    # None-data is now degenerate (skipped + counted), never fatal.
+    board = [
+        _prop("Ghost Player", "player_rush_yds", 50.5),
+        _prop("Real Player", "player_rush_yds", 60.5),
+    ]
+    dists = {
+        "Ghost Player": {
+            "player_rush_yds": {"mean": None, "std": None, "n": 0}
+        },
+        "Real Player": {
+            "player_rush_yds": {"mean": 72.4, "std": 22.1, "n": 48}
+        },
+    }
+    stats = {}
+    picks = picks_mod.rank_props(board, dists, min_ev=0.0, stats=stats)
+    assert stats.get("degenerate_sides", 0) >= 2  # both over+under skipped
+    # the healthy player still gets ranked — one bad apple never kills it
+    assert any(p["player"] == "Real Player" for p in picks)
+
+
+def test_malformed_prop_skipped_not_crash():
+    # A prop with garbage shape (missing books key entirely) must not
+    # take down the scan either — counted in malformed_props.
+    broken = _prop("Broken Prop", "player_rush_yds", 60.5)
+    broken["books"] = None  # garbage shape: iterating None raises TypeError
+    board = [
+        broken,
+        _prop("Real Player", "player_rush_yds", 60.5),
+    ]
+    dists = {
+        "Broken Prop": {
+            "player_rush_yds": {"mean": 72.4, "std": 22.1, "n": 48}
+        },
+        "Real Player": {
+            "player_rush_yds": {"mean": 72.4, "std": 22.1, "n": 48}
+        },
+    }
+    stats = {}
+    picks = picks_mod.rank_props(board, dists, min_ev=0.0, stats=stats)
+    assert stats.get("malformed_props", 0) == 1
+    assert any(p["player"] == "Real Player" for p in picks)
