@@ -24,7 +24,14 @@ def _fresh(path: str) -> bool:
 
 
 def _load(name: str, loader, seasons: list[int], force: bool = False):
-    """Generic pull-or-load: parquet cache first, nflverse on miss/stale."""
+    """Generic pull-or-load: parquet cache first, nflverse on miss/stale.
+
+    Crash-loop hardening (2026-10-09): a failed download NEVER takes the
+    app down. If any cached/bundled copy exists, it is served (even stale)
+    with a warning; the exception only propagates when there is nothing
+    on disk to serve. The bundled seed files in data/nflverse/ mean a
+    fresh deploy always has a full copy — downloads are refresh-only.
+    """
     import polars as pl
 
     # Cache key includes the season range — a 2024-2025 slice must never
@@ -35,10 +42,24 @@ def _load(name: str, loader, seasons: list[int], force: bool = False):
         return pl.read_parquet(path)
     import nflreadpy as nfl
 
-    df = loader(seasons=seasons)
-    if not isinstance(df, pl.DataFrame):
-        df = pl.from_pandas(df)
-    df.write_parquet(path)
+    try:
+        df = loader(seasons=seasons)
+        if not isinstance(df, pl.DataFrame):
+            df = pl.from_pandas(df)
+    except Exception as e:
+        if os.path.exists(path):
+            import logging
+            logging.warning(
+                "nflverse download failed for %s (%s); serving cached copy",
+                key, e,
+            )
+            return pl.read_parquet(path)
+        raise
+    try:
+        df.write_parquet(path)
+    except Exception as e:
+        import logging
+        logging.warning("could not write parquet cache for %s (%s)", key, e)
     return df
 
 
@@ -105,7 +126,16 @@ def teams(force: bool = False):
     path = _path("teams")
     if not force and _fresh(path):
         return pl.read_parquet(path)
-    df = nfl.load_teams()
+    try:
+        df = nfl.load_teams()
+    except Exception as e:
+        if os.path.exists(path):
+            import logging
+            logging.warning(
+                "nflverse download failed for teams (%s); serving cached copy", e
+            )
+            return pl.read_parquet(path)
+        raise
     if not isinstance(df, pl.DataFrame):
         df = pl.from_pandas(df)
     df.write_parquet(path)

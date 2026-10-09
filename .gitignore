@@ -1,6 +1,11 @@
 .env
-data/
+data/*
+# Door 1 (2026-10-09): nflverse parquet is bundled as the cold-start seed —
+# the blanket data/* ignore is lifted for it here.
+!data/nflverse/
 *.parquet
+# Re-include the bundled nflverse seed files (must sit after *.parquet).
+!data/nflverse/*.parquet
 projections/live_distributions.json
 __pycache__/
 *.pyc
