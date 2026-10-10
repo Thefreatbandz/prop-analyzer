@@ -812,19 +812,27 @@ with tab_scan:
     # --- Suggested players strip: 100% data-driven (top EV + trending).
     # Nothing here is anyone's opinion — every suggestion carries its
     # reason string. Tapping one filters the cards below to that player.
-    # (NFL-only for now: suggestions need the NFL news + roster feeds.)
+    # NFL gets EV + news-trending; NBA/MLB get the EV signal only for now
+    # (their news/roster feeds don't exist yet — labeled honestly below).
     _sugs = []
-    if sport == "nfl":
-        try:
-            from players import suggest as psuggest
+    try:
+        from players import suggest as psuggest
 
+        if sport == "nfl":
             _sugs = psuggest.suggestions(prop_picks, _espn_news(), _rosters_df())
-        except Exception:
-            _sugs = []
+        else:
+            _sugs = [{**x, "source": "ev"}
+                     for x in psuggest.suggest_from_ev(prop_picks)]
+    except Exception:
+        _sugs = []
     if _sugs:
         st.markdown("**Worth a look this week**")
-        st.caption("Hand-picked by the data — this week's sharpest +EV props "
-                   "and the names buzzing in the headlines. Looks, not picks.")
+        if sport == "nfl":
+            st.caption("Hand-picked by the data — this week's sharpest +EV props "
+                       "and the names buzzing in the headlines. Looks, not picks.")
+        else:
+            st.caption(f"Top +EV {sport.upper()} props this week, ranked by edge. "
+                       "Looks, not picks — news-trending suggestions coming soon.")
         _rosters = _rosters_df()
         _scols = st.columns(min(len(_sugs), 4))
         _rendered = 0
