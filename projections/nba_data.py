@@ -17,11 +17,17 @@ import time
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "nba")
 # nba_api season strings, most recent first.
 SEASONS = ["2025-26", "2024-25", "2023-24"]
+# Current preseason (2026-27): games happening NOW, ahead of the Oct 20
+# regular-season tip. Pulled separately and tagged is_preseason=1 so the
+# distribution builder can weight/label it honestly — preseason minutes
+# are limited and rotations experimental, so it's signal with an asterisk.
+PRESEASON_SEASON = "2026-27"
+PRESEASON_TTL = 6 * 60 * 60  # games nightly — refresh faster than regular data
 MAX_AGE_SECONDS = 24 * 60 * 60
 
 # Columns we keep from the game log, in a stable order.
 GAME_COLS = ["game_date", "season", "matchup", "team_abbr",
-             "MIN", "PTS", "REB", "AST", "FG3M", "STL", "BLK"]
+             "MIN", "PTS", "REB", "AST", "FG3M", "STL", "BLK", "is_preseason"]
 
 # nba_api's raw column names -> our GAME_COLS.
 _RAW_COLS = {
@@ -181,9 +187,91 @@ def player_game_log(name: str, force: bool = False):
     for c in ("MIN", "PTS", "REB", "AST", "FG3M", "STL", "BLK"):
         if c in combined.columns:
             combined[c] = pd.to_numeric(combined[c], errors="coerce").fillna(0)
+    combined["is_preseason"] = 0
     out = pl.from_pandas(combined[[c for c in GAME_COLS if c in combined.columns]])
     try:
         out.write_parquet(path)
     except Exception as e:
         _warn("could not write nba game log cache for %s (%s)", name, e)
     return out
+
+
+def preseason_game_log(name: str, force: bool = False):
+    """2026-27 preseason game log for one player, newest first.
+
+    Same GAME_COLS schema as player_game_log plus is_preseason=1.
+    Empty (not an error) when the preseason hasn't started, the player
+    didn't play, or the pull fails — the scan degrades honestly.
+    Cached separately with a 6h TTL since games happen nightly.
+    """
+    import polars as pl
+
+    pid = resolve_player_id(name)
+    if pid is None:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in GAME_COLS})
+
+    safe = "".join(c if c.isalnum() else "_" for c in name)[:48]
+    path = _path(f"preseason_{safe}_{pid}")
+    if not force and os.path.exists(path):
+        import time
+        if time.time() - os.path.getmtime(path) < PRESEASON_TTL:
+            return pl.read_parquet(path)
+
+    try:
+        from nba_api.stats.endpoints import playergamelog
+        df = playergamelog.PlayerGameLog(
+            player_id=pid, season=PRESEASON_SEASON,
+            season_type_all_star="Pre Season").get_data_frames()[0]
+    except Exception as e:
+        _warn("nba preseason pull failed for %s (%s)", name, e)
+        if os.path.exists(path):
+            return pl.read_parquet(path)
+        return pl.DataFrame(schema={c: pl.Utf8 for c in GAME_COLS})
+    if df is None or df.empty:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in GAME_COLS})
+
+    import pandas as pd
+    df = df.copy()
+    df["season"] = PRESEASON_SEASON + " PRE"
+    df = df.rename(columns={k: v for k, v in _RAW_COLS.items()
+                            if k in df.columns})
+    if "team_abbr" not in df.columns and "matchup" in df.columns:
+        df["team_abbr"] = (df["matchup"].astype(str)
+                           .str.extract(r"^([A-Z]{2,3})")[0])
+    keep = [c for c in GAME_COLS if c in df.columns or c == "is_preseason"]
+    df = df[[c for c in keep if c in df.columns]]
+    df["game_date"] = pd.to_datetime(df["game_date"], errors="coerce")
+    df = df.sort_values("game_date", ascending=False)
+    for c in ("MIN", "PTS", "REB", "AST", "FG3M", "STL", "BLK"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df["is_preseason"] = 1
+    out = pl.from_pandas(df[[c for c in GAME_COLS if c in df.columns]])
+    try:
+        out.write_parquet(path)
+    except Exception as e:
+        _warn("could not write nba preseason cache for %s (%s)", name, e)
+    return out
+
+
+def full_game_log(name: str, force: bool = False):
+    """Regular-season log + preseason games on top, newest first.
+
+    This is what the distribution builder uses: preseason is the freshest
+    signal available before opening night, tagged is_preseason=1 so
+    callers can label it honestly.
+    """
+    import polars as pl
+
+    reg = player_game_log(name, force=force)
+    pre = preseason_game_log(name, force=force)
+    if pre.height == 0:
+        return reg
+    if reg.height == 0:
+        return pre
+    # Union schemas (preseason always has is_preseason; reg now does too).
+    cols = GAME_COLS
+    reg = reg.select([c for c in cols if c in reg.columns])
+    pre = pre.select([c for c in cols if c in pre.columns])
+    combined = pl.concat([pre, reg], how="diagonal")
+    return combined.sort("game_date", descending=True)

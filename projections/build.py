@@ -68,8 +68,10 @@ def build_nba_distributions(players: list[tuple[str, str, str]]) -> dict:
     """{player: {market: dist-dict}} for NBA props.
 
     players: (name, team, market) with market in model.NBA_STAT_MAP keys.
-    Uses nba_api game logs (last 3 seasons, recency-weighted). Players with
-    no games (offseason, unknown names) are skipped — never faked.
+    Uses nba_api game logs (last 3 regular seasons + current preseason,
+    recency-weighted). Preseason games ride on top as the freshest signal —
+    tagged in the dist so the UI can label it honestly. Players with no
+    games are skipped — never faked.
     """
     from projections import nba_data
 
@@ -79,7 +81,7 @@ def build_nba_distributions(players: list[tuple[str, str, str]]) -> dict:
         if not col:
             continue
         try:
-            log = nba_data.player_game_log(name)
+            log = nba_data.full_game_log(name)
         except Exception:
             continue
         if log.height == 0:
@@ -98,6 +100,10 @@ def build_nba_distributions(players: list[tuple[str, str, str]]) -> dict:
             dist["team"] = log["team_abbr"][0]
         except Exception:
             pass
+        try:
+            dist["preseason_games"] = sum(1 for r in rows if r.get("is_preseason"))
+        except Exception:
+            dist["preseason_games"] = 0
         out.setdefault(name, {})[market] = dist
     return out
 

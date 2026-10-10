@@ -136,3 +136,42 @@ def test_rank_props_accepts_nba_dists(mock_nba):
     assert isinstance(picks, list)
     # Malformed data must never crash the scan (see degenerate tests).
     assert stats.get("malformed_props", 0) == 0 or True
+
+
+def test_preseason_game_log_tagged():
+    # 2026-10-09: preseason pull must tag games is_preseason=1 and never
+    # raise when there's no preseason data (unknown player).
+    import projections.nba_data as nba
+
+    empty = nba.preseason_game_log("Nobody McNobody")
+    assert empty.height == 0  # unknown player -> empty, not a crash
+
+    # schema check on the real path (may be empty out of preseason)
+    log = nba.preseason_game_log("LeBron James")
+    assert "is_preseason" in log.columns
+    if log.height:
+        assert (log["is_preseason"] == 1).all()
+
+
+def test_full_game_log_preseason_on_top():
+    import projections.nba_data as nba
+
+    log = nba.full_game_log("LeBron James")
+    assert "is_preseason" in log.columns
+    if log.height:
+        # newest first: any preseason games sit above regular-season ones
+        rows = log.to_dicts()
+        pre_idx = [i for i, r in enumerate(rows) if r.get("is_preseason")]
+        reg_idx = [i for i, r in enumerate(rows) if not r.get("is_preseason")]
+        if pre_idx and reg_idx:
+            assert max(pre_idx) < min(reg_idx)
+
+
+def test_nba_dist_tags_preseason_count():
+    from projections import build
+
+    dists = build.build_nba_distributions([("LeBron James", "BKN", "player_points")])
+    d = dists.get("LeBron James", {}).get("player_points")
+    assert d is not None
+    assert "preseason_games" in d
+    assert isinstance(d["preseason_games"], int)
