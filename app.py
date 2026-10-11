@@ -297,6 +297,19 @@ st.markdown(
                   border: 1px solid var(--gold); color: var(--gold);
                   box-shadow: 0 0 10px #C9A22744; }
 
+    /* ---- Live now strip ---- */
+    .live-dot { display: inline-block; width: 8px; height: 8px;
+                border-radius: 50%; background: #ff3b30; margin-right: 6px;
+                animation: livepulse 1.6s infinite; }
+    @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .live-game { border: 1px solid #33333a; border-radius: 10px;
+                 padding: 10px 12px; margin-bottom: 8px;
+                 background: linear-gradient(180deg, #18181c, var(--panel)); }
+    .live-teams { font-weight: 700; font-size: 0.95em; }
+    .live-clock { color: var(--gold); font-size: 0.8em; margin-top: 2px; }
+    .live-leg { color: var(--ink-dim); font-size: 0.85em; margin-top: 4px; }
+    .live-leg b { color: var(--gold); }
+
     /* ---- Trading cards: photo + jersey badge + name plate ---- */
     .tcard-top { display: flex; gap: 12px; align-items: flex-start; }
     .tcard-photo { position: relative; width: 76px; height: 76px;
@@ -469,6 +482,26 @@ def _build_board_dists(board_key: tuple, sport: str) -> dict:
     season, week = pbuild.current_nfl_week()
     return pbuild.build_distributions(
         [(p, t, m) for p, t, m in board_key], season, week)
+
+
+@st.cache_data(ttl=60, show_spinner="Loading live scores...")
+def _live_scoreboard() -> list:
+    """Today's NFL games with live scores/clock (ESPN, free, no key)."""
+    from live import espn as _le
+    try:
+        return _le.get_scoreboard()
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=120, show_spinner="Loading live stats...")
+def _live_boxscore(event_id: str) -> dict:
+    """Live player stats for one game (ESPN boxscore)."""
+    from live import espn as _le
+    try:
+        return _le.get_boxscore(event_id)
+    except Exception:
+        return {}
 
 
 def _model_dists(board: list, model_mode: str, sport: str) -> dict:
@@ -1009,6 +1042,36 @@ if nav == "Home":
                 unsafe_allow_html=True)
     if props_note and not board_empty_live:
         st.warning(props_note)
+
+    # --- Live now (auto-refreshes every 2 min while games are live) ---
+    if sport == "nfl":
+        @st.fragment(run_every=120)
+        def _live_now():
+            _sb = _live_scoreboard()
+            _live_games = [g for g in _sb if g.get("live")]
+            if _live_games:
+                st.markdown(
+                    f"**<span class=\"live-dot\"></span> Live now"
+                    f"</strong> — {len(_live_games)} game"
+                    f"{'s' if len(_live_games) != 1 else ''}",
+                    unsafe_allow_html=True)
+                _lcols = st.columns(min(len(_live_games), 4))
+                for _li, _lg in enumerate(_live_games[:4]):
+                    with _lcols[_li % 4]:
+                        st.markdown(
+                            f'<div class="live-game">'
+                            f'<div class="live-teams">{_lg["away"]} '
+                            f'{_lg["away_score"]} @ {_lg["home"]} '
+                            f'{_lg["home_score"]}</div>'
+                            f'<div class="live-clock">{_lg["detail"]}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True)
+                _final = [g for g in _sb if g.get("status") == "final"]
+                if _final:
+                    st.caption("Final: " + ", ".join(
+                        f'{g["away"]} {g["away_score"]} @ {g["home"]} '
+                        f'{g["home_score"]}' for g in _final))
+        _live_now()
 
     # --- Today's games ---
     _games, _games_note = _upcoming_games(sport)
@@ -1592,7 +1655,8 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 with _tc2:
                     st.markdown(
                         f'<span class="bprop-line">Over {_t["line"]:g}</span> '
-                        f'<span class="bprop-fair">{_t["fair_p"]:.0%} fair</span>')
+                        f'<span class="bprop-fair">{_t["fair_p"]:.0%} fair</span>',
+                        unsafe_allow_html=True)
                     if _already:
                         st.caption("✓ in slip")
                     elif st.button("More", key=f"{_tkey}_over"):
@@ -1604,7 +1668,8 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                             f'<span class="bprop-line">Under '
                             f'{_u["line"]:g}</span> '
                             f'<span class="bprop-fair">{_u["fair_p"]:.0%} '
-                            f'fair</span>')
+                            f'fair</span>',
+                            unsafe_allow_html=True)
                         if _already:
                             st.caption("✓ in slip")
                         elif st.button("Less", key=f"{_tkey}_under"):
@@ -1637,6 +1702,28 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
         st.info("No legs yet — pick a player above. Building is free; "
                 "saving the slip is Premium.")
     else:
+        # Live leg tracking: one scoreboard pull + boxscores for live
+        # games only, then per-leg lookup. Cached; never crashes the slip.
+        _live_rows = {}
+        if sport == "nfl":
+            try:
+                from live import espn as _le
+                _lsb = _live_scoreboard()
+                _live_ids = [g["id"] for g in _lsb if g.get("live")]
+                _lbs = {gid: _live_boxscore(gid) for gid in _live_ids}
+                for _leg in _blegs:
+                    if _leg.get("market") == "moneyline":
+                        continue
+                    _g = _le.find_player_game(_lsb, _lbs, _leg["player"])
+                    if _g is None:
+                        continue
+                    _v = _le.player_live_stat(
+                        _lbs.get(_g["id"], {}), _leg["player"],
+                        _leg["market"])
+                    if _v is not None:
+                        _live_rows[_leg["player"]] = (_v, _g["detail"])
+            except Exception:
+                _live_rows = {}
         for _i, _leg in enumerate(_blegs):
             _c1, _c2 = st.columns([4, 1])
             if _leg["market"] == "moneyline":
@@ -1649,7 +1736,16 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 _desc = (f"**{_leg['player']}** {_leg['side']} "
                          f"{_leg['line']:g} {_lbl}{_tier_txt}"
                          f" — fair P **{_leg['fair_p']:.1%}**")
-            _c1.markdown(_desc)
+                _lr = _live_rows.get(_leg["player"])
+                if _lr is not None:
+                    _lv, _ld = _lr
+                    import html as _htmllib
+                    _desc += (
+                        f'<div class="live-leg">\U0001f534 '
+                        f'<b>{_lv:g}</b> / {_leg["line"]:g} '
+                        f'{_htmllib.escape(_lbl)} — '
+                        f'{_htmllib.escape(_ld)}</div>')
+            _c1.markdown(_desc, unsafe_allow_html=True)
             if _c2.button("Remove", key=f"bleg_rm_{_i}"):
                 _blegs.pop(_i)
                 st.rerun()

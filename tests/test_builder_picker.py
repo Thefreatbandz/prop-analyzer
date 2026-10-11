@@ -282,3 +282,12 @@ def test_board_dist_gaps():
     full = {"Josh Allen": {"player_pass_yds": {}, "player_rush_yds": {}},
             "Dallen Bentley": {"player_rec_yds": {}}}
     assert picker.board_dist_gaps(board, full) == []
+
+
+def test_tier_lines_floor_at_half():
+    """Low-mean markets (e.g. receptions) must not produce 'Over -0.5'
+    safe rows — lines floor at 0.5, the lowest real book line."""
+    tiers = picker.tier_lines(0.4, 0.3)
+    assert tiers, "expected tiers"
+    assert all(t["line"] >= 0.5 for t in tiers)
+    assert tiers[0]["line"] == 0.5

@@ -206,9 +206,11 @@ def tier_lines(mean: float, std: float,
     """Lines targeting each tier's P(over), via the normal quantile.
 
     Returns [{tier, target_p, line}] with lines rounded to 0.5
-    (PrizePicks-style). Tiers that collapse to the same line
-    (tiny-std distributions) are deduped — never show two identical
-    rows. Pure math, no model calls; callers verify with price_leg.
+    (PrizePicks-style), floored at 0.5 (books never post a lower line —
+    a "Safe over -0.5" would be a silly 100% row). Tiers that collapse
+    to the same line (tiny-std distributions) are deduped — never show
+    two identical rows. Pure math, no model calls; callers verify with
+    price_leg.
     """
     from statistics import NormalDist
 
@@ -223,6 +225,7 @@ def tier_lines(mean: float, std: float,
             line = round(nd.inv_cdf(1 - target) * 2) / 2
         except Exception:
             continue
+        line = max(0.5, line)
         if line in seen:
             continue
         seen.add(line)
