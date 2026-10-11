@@ -78,6 +78,9 @@ def test_list_events_passes_sport(monkeypatch):
 
     monkeypatch.setattr(lumify.requests, "get", fake_get)
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
+    # Bypass the 1h events cache so the test sees the real HTTP call.
+    monkeypatch.setattr(lumify, "cached_get",
+                        lambda source, key, ttl, fetcher, force=False: fetcher())
     assert lumify.list_events(sport="mlb") == []
     assert seen.get("sport") == "mlb"
     assert lumify.list_events() == []  # default still NFL
@@ -135,8 +138,9 @@ def test_get_player_props_skips_dead_events(monkeypatch):
     monkeypatch.setattr(lum, "fetch_props", fake_fetch)
     monkeypatch.setattr(lum, "_key", lambda: "fake-key")
     board = lum.get_player_props(sport="mlb")
-    props = board.get("player_props", [])
+    props = board.get("props", [])
     assert len(props) == 1 and props[0]["player"] == "P"
+    assert len(board["events_covered"]) == 1  # dead event skipped
 
 
 def test_get_player_props_all_dead_returns_honest_empty(monkeypatch):

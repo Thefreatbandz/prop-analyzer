@@ -214,6 +214,12 @@ def test_view_flow_renders_spotlight_without_picks(monkeypatch):
     monkeypatch.setenv("ODDS_API_KEY", "")
     monkeypatch.setenv("LUMIFY_API_KEY", "")
     from streamlit.testing.v1 import AppTest
+    import streamlit as st
+    # Earlier tests may run the app with the real .env key (load_dotenv
+    # leaks it in-process), leaving live-board results in st.cache_data
+    # under the same cache keys. Clear so this test deterministically
+    # gets the sample board instead of a stale live result.
+    st.cache_data.clear()
 
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")

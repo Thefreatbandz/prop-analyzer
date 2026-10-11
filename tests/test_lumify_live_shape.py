@@ -107,22 +107,63 @@ def test_list_events_requests_scheduled(monkeypatch):
 
     monkeypatch.setattr(lumify.requests, "get", fake_get)
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
+    monkeypatch.setattr(lumify, "cached_get",
+                        lambda source, key, ttl, fetcher, force=False: fetcher())
     events = lumify.list_events()
     assert seen["params"]["status"] == "scheduled"
     assert events == [{"id": 1, "status": "scheduled"}]
 
 
-def test_get_player_props_finds_scheduled_game(monkeypatch):
+def test_get_player_props_full_slate(monkeypatch):
+    """Default: every upcoming event with posted props is merged."""
     events = [
-        {"id": 19689, "name": "Tampa Bay Buccaneers at Dallas Cowboys",
-         "status": "scheduled"},
+        {"id": 1, "status": "scheduled",
+         "competitors": [{"abbreviation": "DEN"}, {"abbreviation": "LAC"}]},
+        {"id": 2, "status": "scheduled",
+         "competitors": [{"abbreviation": "DET"}, {"abbreviation": "ARI"}]},
+        {"id": 3, "status": "scheduled"},  # no props posted -> skipped free
+    ]
+    empty = {"event_id": "3", "available": False, "player_props": []}
+    monkeypatch.setattr(lumify, "list_events",
+                        lambda status="scheduled", sport="nfl": events)
+    monkeypatch.setattr(
+        lumify, "fetch_props",
+        lambda eid, sport="nfl", force=False:
+            dict(LIVE_BOARD, event_id=str(eid)) if eid in (1, 2) else empty)
+    monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
+    board = lumify.get_player_props()
+    assert len(board["events_covered"]) == 2
+    props = lumify.normalize(board)
+    assert len(props) == 6  # 3 per game x 2 games
+    games = {p["game"] for p in props}
+    assert games == {"DEN @ LAC", "DET @ ARI"}
+
+
+def test_get_player_props_single_game_opt_out(monkeypatch):
+    """full_slate=False keeps the old first-event-only behavior."""
+    events = [
+        {"id": 1, "status": "scheduled"},
+        {"id": 2, "status": "scheduled"},
     ]
     monkeypatch.setattr(lumify, "list_events",
                         lambda status="scheduled", sport="nfl": events)
     monkeypatch.setattr(lumify, "fetch_props",
                         lambda eid, sport="nfl", force=False: LIVE_BOARD)
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
+    board = lumify.get_player_props(full_slate=False)
+    assert len(board["events_covered"]) == 1  # first event only
+    assert len(lumify.normalize(board)) == 3
+
+
+def test_get_player_props_no_games_with_props(monkeypatch):
+    events = [{"id": 1, "status": "scheduled"}]
+    monkeypatch.setattr(lumify, "list_events",
+                        lambda status="scheduled", sport="nfl": events)
+    monkeypatch.setattr(lumify, "fetch_props",
+                        lambda eid, sport="nfl", force=False:
+                            {"event_id": "1", "available": False,
+                             "player_props": []})
+    monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
     board = lumify.get_player_props()
-    assert board["event_id"] == "19689"
-    props = lumify.normalize(board)
-    assert len(props) == 3
+    assert board["props"] == []
+    assert "no" in board["note"] and "props" in board["note"]

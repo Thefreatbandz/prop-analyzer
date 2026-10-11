@@ -48,8 +48,9 @@ def load_sample(sport: str = "nfl") -> dict:
         return json.load(f)
 
 
-def list_events(status: str = "scheduled", sport: str = "nfl") -> list[dict]:
-    """Events (cheap: 1 credit). Each has an id for props pulls.
+def list_events(status: str = "scheduled", sport: str = "nfl",
+              force: bool = False) -> list[dict]:
+    """Events (cheap: 1 credit, cached 1h).
 
     Defaults to status="scheduled" — without it the endpoint returns the most
     recent finals, so an "upcoming games" call would find nothing to scan.
@@ -57,13 +58,19 @@ def list_events(status: str = "scheduled", sport: str = "nfl") -> list[dict]:
     sport = _check_sport(sport)
     if not _key():
         raise RuntimeError("LUMIFY_API_KEY is not set.")
-    params = {"sport": sport}
-    if status:
-        params["status"] = status
-    r = requests.get(f"{BASE}/events", params=params, headers=_headers(), timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("events", data if isinstance(data, list) else [])
+
+    def _fetch():
+        params = {"sport": sport}
+        if status:
+            params["status"] = status
+        r = requests.get(f"{BASE}/events", params=params, headers=_headers(),
+                         timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("events", data if isinstance(data, list) else [])
+
+    return cached_get("lumify", f"{sport}_events_{status}", 3600, _fetch,
+                      force=force)
 
 
 def fetch_props(event_id: str, sport: str = "nfl", force: bool = False) -> dict:
@@ -83,11 +90,16 @@ def fetch_props(event_id: str, sport: str = "nfl", force: bool = False) -> dict:
 
 
 def get_player_props(event_id: str | None = None, sport: str = "nfl",
-                     force: bool = False) -> dict:
+                     force: bool = False, full_slate: bool = True) -> dict:
     """Props board, live if we have a key, sample data otherwise.
 
-    With a key and no event_id: lists events, then pulls props only for the
-    first upcoming event (keeps credit burn tiny on the free tier).
+    With a key and no event_id: lists events, then pulls props for every
+    upcoming event that has them (full_slate=True, the default). One
+    credit per event with posted lines; `available: false` checks are
+    FREE, and each event's board is cached 6h — a full Sunday slate is
+    ~13 credits per scan window, well inside the 1,000 free credits.
+    full_slate=False keeps the old single-game behavior (first event
+    with props only).
     """
     sport = _check_sport(sport)
     if not _key():
@@ -102,11 +114,7 @@ def get_player_props(event_id: str | None = None, sport: str = "nfl",
         if not upcoming:
             return {"props": [],
                     "note": f"no upcoming {sport.upper()} games right now"}
-        # First event with actually-posted props wins. `available: false`
-        # checks are FREE, so skipping dead events costs no credits.
-        # (2026-10-09: MLB's first listed event had no props while the
-        # third did — blind-first broke the whole sport scan.)
-        event_id = None
+        boards = []
         for e in upcoming:
             eid = e.get("id")
             try:
@@ -114,12 +122,43 @@ def get_player_props(event_id: str | None = None, sport: str = "nfl",
             except Exception:
                 continue
             props = board.get("player_props", board.get("props", []))
-            if props:
-                event_id = eid
-                return board
-        return {"props": [],
-                "note": f"no {sport.upper()} games have posted player props yet"}
+            if not props:
+                continue  # `available: false` — free to check, skip
+            # (2026-10-09: MLB's first listed event had no props while the
+            # third did — blind-first broke the whole sport scan.)
+            board["_event_id"] = eid
+            board["_event_label"] = _event_label(e)
+            boards.append(board)
+            if not full_slate:
+                break
+        if not boards:
+            return {"props": [],
+                    "note": f"no {sport.upper()} games have posted player props yet"}
+        merged_props = []
+        for b in boards:
+            for p in b.get("player_props", b.get("props", [])):
+                p = dict(p)  # don't mutate the cached payload
+                p["_event_id"] = b.get("_event_id")
+                p["_event_label"] = b.get("_event_label")
+                merged_props.append(p)
+        return {"props": merged_props,
+                "events_covered": [
+                    {"id": b.get("_event_id"),
+                     "label": b.get("_event_label")} for b in boards]}
     return fetch_props(event_id, sport=sport, force=force)
+
+
+def _event_label(event: dict) -> str:
+    """'DEN @ LAC' from a Lumify event dict (best effort)."""
+    try:
+        comps = event.get("competitors") or event.get("teams") or []
+        if len(comps) >= 2:
+            a = comps[0].get("abbreviation") or comps[0].get("name", "")
+            b = comps[1].get("abbreviation") or comps[1].get("name", "")
+            return f"{a} @ {b}".strip(" @")
+    except Exception:
+        pass
+    return event.get("name") or event.get("id", "")
 
 
 # Live Lumify market keys -> the canonical player_* keys our projection
@@ -278,6 +317,9 @@ def normalize(payload: dict, sport: str = "nfl") -> list[dict]:
                 "market": market,
                 "label": label,
                 "books": [b for b in books if b["line"] is not None],
+                # Full-slate boards tag each prop with its game
+                # ("DEN @ LAC"); absent on single-game/sample boards.
+                "game": p.get("_event_label"),
             }
         )
     return [p for p in out if p["books"]]

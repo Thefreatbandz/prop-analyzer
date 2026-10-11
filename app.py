@@ -563,6 +563,13 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
     try:
         raw_props = lumify.get_player_props(sport=sport)
         props = lumify.normalize(raw_props, sport=sport)
+        _games_covered = raw_props.get("events_covered") or []
+        if _games_covered and os.environ.get("LUMIFY_API_KEY"):
+            _gl = ", ".join(g.get("label", "") for g in _games_covered
+                            if g.get("label"))
+            props_note = (f"Full slate: {len(_games_covered)} games "
+                          f"({_gl})" if _gl else
+                          f"Full slate: {len(_games_covered)} games")
         if not os.environ.get("LUMIFY_API_KEY"):
             # get_player_props() silently served the bundled sample —
             # label it honestly so nobody mistakes it for the live board.
@@ -591,6 +598,11 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
     # and surface the low-sample honesty flag on the pick itself.
     for _p in prop_picks:
         _p["sport"] = sport
+        _gm = next((r.get("game") for r in props
+                    if r.get("player") == _p.get("player")
+                    and r.get("market") == _p.get("market")), None)
+        if _gm:
+            _p["game"] = _gm
         _d = dists.get(_p["player"], {}).get(_p["market"], {})
         if _d.get("sample_flag"):
             _p["sample_flag"] = _d["sample_flag"]
@@ -988,6 +1000,22 @@ ml_picks, prop_picks, ml_note, props_note, board_empty_live = run_scan(
     model_mode, min_ev, sport)
 all_picks = prop_picks + ml_picks
 
+def _goto(section, **state):
+    """Button on_click callback that jumps to a nav section.
+
+    Setting st.session_state for a widget key (like "nav") AFTER that
+    widget has rendered raises StreamlitWidgetAlreadyInstantiatedError.
+    on_click callbacks run before the script body, so navigating from a
+    callback is the safe pattern. Extra state (player_focus, etc.) rides
+    along.
+    """
+    def _cb():
+        for k, v in state.items():
+            st.session_state[k] = v
+        st.session_state["nav"] = section
+    return _cb
+
+
 # ---------- Global player search (sidebar) ----------
 with st.sidebar:
     st.divider()
@@ -1003,11 +1031,9 @@ with st.sidebar:
             for _h in _hits:
                 _lbl = (f"{_h['name']} · {_h['team'] or ''} "
                         f"{_h['position'] or ''}".strip())
-                if st.button(_lbl, key=f"srch_{_h['name']}"):
-                    st.session_state["player_focus"] = _h["name"]
-                    st.session_state["player_search_box"] = ""
-                    st.session_state["nav"] = "Players"
-                    st.rerun()
+                st.button(_lbl, key=f"srch_{_h['name']}",
+                          on_click=_goto("Players", player_focus=_h["name"],
+                                         player_search_box=""))
         except Exception:
             st.caption("Search needs the roster cache — run "
                        "`python -m players.build` once.")
@@ -1055,9 +1081,9 @@ if nav == "Home":
                     f"</strong> — {len(_live_games)} game"
                     f"{'s' if len(_live_games) != 1 else ''}",
                     unsafe_allow_html=True)
-                _lcols = st.columns(min(len(_live_games), 4))
-                for _li, _lg in enumerate(_live_games[:4]):
-                    with _lcols[_li % 4]:
+                # Scrollable: every live game, not just the first 4.
+                with st.container(height=220):
+                    for _lg in _live_games:
                         st.markdown(
                             f'<div class="live-game">'
                             f'<div class="live-teams">{_lg["away"]} '
@@ -1192,10 +1218,9 @@ if nav == "Home":
     _qcols = st.columns(len(_qlinks))
     for (_qc, (_name, _icon, _desc)) in zip(_qcols, _qlinks):
         with _qc:
-            if st.button(f"{_icon} {_name}", key=f"home_goto_{_name}",
-                         help=_desc, use_container_width=True):
-                st.session_state["nav"] = _name
-                st.rerun()
+            st.button(f"{_icon} {_name}", key=f"home_goto_{_name}",
+                      help=_desc, use_container_width=True,
+                      on_click=_goto(_name))
 
 # ---------------- Scan ----------------
 if nav == "Scan":
@@ -1454,11 +1479,10 @@ if nav == "Scan":
                     unsafe_allow_html=True)
                 # Explore-trends jump: the card's affordance is visual;
                 # this real button drives the Players view.
-                if st.button("📈 Explore player trends",
-                             key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
-                    st.session_state["player_focus"] = p.get("player")
-                    st.session_state["nav"] = "Players"
-                    st.rerun()
+                st.button("📈 Explore player trends",
+                          key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}",
+                          on_click=_goto("Players",
+                                        player_focus=p.get("player")))
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",
@@ -1467,11 +1491,9 @@ if nav == "Scan":
                 _sflag = html.escape(str(p["sample_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_sflag}</span>",
                             unsafe_allow_html=True)
-            if st.button("Details", key=f"det_{i}"):
-                st.session_state["selected_pick"] = p
-                st.session_state["nav"] = "Builder"
-                st.session_state["builder_sub"] = "Pick detail"
-                st.rerun()
+            st.button("Details", key=f"det_{i}",
+                      on_click=_goto("Builder", selected_pick=p,
+                                     builder_sub="Pick detail"))
 
 # ---------------- Track: the public proof + paper ledger ----------------
 if nav == "Track":
