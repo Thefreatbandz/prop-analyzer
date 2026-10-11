@@ -218,6 +218,7 @@ def test_view_flow_renders_spotlight_without_picks(monkeypatch):
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
     at = AppTest.from_file(app_path, default_timeout=180)
+    at.session_state["nav"] = "Scan"
     at.session_state["scan_player"] = "Erick All"
     at.session_state["scan_player_team"] = "CIN"
     at.run()

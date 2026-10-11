@@ -148,19 +148,22 @@ def test_dashboard_boots_with_new_views(monkeypatch):
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
     at = AppTest.from_file(app_path, default_timeout=180)
+    at.session_state["nav"] = "Scan"
     at.run()
     assert not at.exception, f"dashboard raised: {at.exception}"
-    labels = []
+    # New grouped nav: 8 sections via segmented control (Home, Scan,
+    # Teams, Players, Intel, Track, Builder, Lab). No st.tabs anymore.
+    nav_opts = []
     try:
-        labels = [t.label for t in at.tabs]
+        for sc in at.segmented_control:
+            if sc.key == "nav":
+                nav_opts = list(sc.options)
     except Exception:
         pass
-    if labels:  # label introspection is best-effort across versions
-        for want in ("Scan", "Track Record", "Builder", "Alerts", "Players",
-                     "Compare"):
-            assert want in labels, f"missing tab: {want} in {labels}"
-        assert "Favorites" not in labels, \
-            "personal favorites were removed — tab must be gone"
+    if nav_opts:
+        for want in ("Home", "Scan", "Teams", "Players", "Intel", "Track",
+                     "Builder", "Lab"):
+            assert want in nav_opts, f"missing nav: {want} in {nav_opts}"
     # The degraded-moneyline notice must render, not crash.
     infos = [str(getattr(i, "value", "")) for i in at.info]
     assert any("props only" in v.lower() for v in infos), \

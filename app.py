@@ -771,18 +771,148 @@ with st.sidebar:
                 if st.button(_lbl, key=f"srch_{_h['name']}"):
                     st.session_state["player_focus"] = _h["name"]
                     st.session_state["player_search_box"] = ""
+                    st.session_state["nav"] = "Players"
                     st.rerun()
         except Exception:
             st.caption("Search needs the roster cache — run "
                        "`python -m players.build` once.")
 
-(tab_scan, tab_record, tab_builder, tab_detail, tab_tracker, tab_players,
- tab_tend, tab_news, tab_alerts, tab_lab, tab_compare) = st.tabs(
-    ["Scan", "Track Record", "Builder", "Pick detail", "Tracker", "Players",
-     "Tendencies", "News", "Alerts", "Lab", "Compare"])
+# ---------- Section nav (grouped) ----------
+# Home is the landing view. Related tabs are grouped so the nav stays
+# scannable: Intel = Tendencies/News/Alerts, Track = Track Record/Tracker,
+# Builder keeps Pick detail as a drill-down, Lab = backtest + compare
+# (both premium). `nav` lives in session state so Home quick-links and
+# the sidebar player search can jump straight to a section.
+NAV_PAGES = ["Home", "Scan", "Teams", "Players", "Intel", "Track",
+             "Builder", "Lab"]
+if "nav" not in st.session_state:
+    st.session_state["nav"] = "Home"
+_nav = st.segmented_control("Section", NAV_PAGES, key="nav",
+                            label_visibility="collapsed")
+nav = _nav or "Home"
 
-# ---------------- Scan (home) ----------------
-with tab_scan:
+# ---------------- Home ----------------
+if nav == "Home":
+    _accent = {"nfl": "#C9A227", "nba": "#F58420",
+               "mlb": "#E31837"}.get(sport, "#C9A227")
+    st.markdown(
+        f"""<div style="padding: 18px 4px 6px;">
+        <div style="font-size: 34px; font-weight: 800; letter-spacing: 2px;">
+        BANDZ <span style="color: {_accent};">EDGE</span></div>
+        <div style="color: #9a9a9a; font-size: 14px; margin-top: 2px;">
+        Find the mispriced props. Track every pick. Trust the math.</div>
+        </div>""",
+        unsafe_allow_html=True)
+    st.markdown(f"<span class='sport-badge'>{sport.upper()}</span>",
+                unsafe_allow_html=True)
+    if props_note and not board_empty_live:
+        st.warning(props_note)
+
+    # --- Today's games ---
+    _games, _games_note = _upcoming_games(sport)
+    _today = [g for g in _games if g.get("is_today")]
+    _show = _today if _today else _games[:6]
+    if _show:
+        st.markdown(f"**{'Today' if _today else 'Up next'}**"
+                    f" — {len(_show)} game{'s' if len(_show) != 1 else ''}")
+        for _g in _show:
+            _g = {**_g, "kickoff": _gsched.kickoff_label(_g["starts_at"])}
+            st.markdown(ui_cards.game_row_html(_g), unsafe_allow_html=True)
+    elif _games_note:
+        st.caption(_games_note)
+
+    # --- Top edges snapshot ---
+    if prop_picks:
+        st.markdown("**Top edges right now**")
+        _hcols = st.columns(min(len(prop_picks[:4]), 4))
+        for _i, _p in enumerate(prop_picks[:4]):
+            with _hcols[_i % 4]:
+                _p_sport = _p.get("sport", sport)
+                _mu_html = ""
+                _bars = _hit = _cold = ""
+                _photo = _jersey = _pos = None
+                if _p_sport == "nfl":
+                    _mu = _matchup_str(_p.get("team"))
+                    _mu_html = (f" · {_mu}" if _mu
+                                else f" · {html.escape(str(_p.get('team', '')))}")
+                    _bars, _hit, _cold = _card_form(_p, "5")
+                    try:
+                        from players import headshots as _hs
+                        _photo = _hs.headshot_b64(_p["player"],
+                                                  _rosters_df())
+                        _jersey = _hs.jersey_number(_p["player"],
+                                                    _rosters_df())
+                        _pos = _hs.position_abbr(_p["player"], _rosters_df())
+                    except Exception:
+                        pass
+                else:
+                    _mu_html = (f" · {html.escape(str(_p.get('team', '')))}"
+                                if _p.get("team") else "")
+                st.markdown(
+                    ui_cards.trading_card_html(
+                        _p, matchup_html=_mu_html, bars=_bars,
+                        hit_html=_hit, cold_html=_cold, photo_b64=_photo,
+                        jersey=_jersey, position=_pos, sport=_p_sport),
+                    unsafe_allow_html=True)
+        st.divider()
+
+    # --- Game lines: who the books favor (needs ODDS_API_KEY) ---
+    st.markdown("**Game lines**")
+    if os.environ.get("ODDS_API_KEY"):
+        try:
+            _ml_games, _ = the_odds_api.get_moneylines_strict()
+            _favs = []
+            for _g in _ml_games:
+                _books = _g.get("books", {})
+                if not _books:
+                    continue
+                _best = {}
+                for _side in ("home", "away"):
+                    _prices = [v[_side] for v in _books.values()
+                               if _side in v]
+                    if _prices:
+                        _best[_side] = min(_prices)
+                if len(_best) == 2:
+                    _fav_side = ("home" if _best["home"] < _best["away"]
+                                 else "away")
+                    _favs.append({
+                        "fav": _g[_fav_side], "price": _best[_fav_side],
+                        "dog": _g["away" if _fav_side == "home" else "home"],
+                        "home": _g["home"], "away": _g["away"]})
+            if _favs:
+                import pandas as pd
+                st.dataframe(pd.DataFrame([
+                    {"favorite": f["fav"], "price": f["price"],
+                     "vs": f["dog"]} for f in _favs[:10]
+                ]), use_container_width=True, hide_index=True)
+                st.caption("Favorites by best available moneyline — "
+                           "shortest price is favored. Spreads need a "
+                           "paid props feed; we don't guess them.")
+            else:
+                st.caption("No game lines posted right now.")
+        except Exception:
+            st.caption("Couldn't reach the odds feed right now.")
+    else:
+        st.info("Add ODDS_API_KEY in Secrets for live game lines "
+                "(favorites, moneylines). Props-only mode until then — "
+                "nothing here is guessed.")
+
+    # --- Quick links ---
+    st.markdown("**Jump in**")
+    _qlinks = [("Scan", "🔍", "Ranked +EV props"),
+               ("Teams", "🏟️", "Records, schedules, tendencies"),
+               ("Players", "👤", "Profiles, form, game logs"),
+               ("Track", "📊", "Public record — grade us")]
+    _qcols = st.columns(len(_qlinks))
+    for (_qc, (_name, _icon, _desc)) in zip(_qcols, _qlinks):
+        with _qc:
+            if st.button(f"{_icon} {_name}", key=f"home_goto_{_name}",
+                         help=_desc, use_container_width=True):
+                st.session_state["nav"] = _name
+                st.rerun()
+
+# ---------------- Scan ----------------
+if nav == "Scan":
     st.markdown(f"<span class='sport-badge'>{sport.upper()}</span>",
                 unsafe_allow_html=True)
     if ml_note:
@@ -1027,10 +1157,17 @@ with tab_scan:
                             unsafe_allow_html=True)
             if st.button("Details", key=f"det_{i}"):
                 st.session_state["selected_pick"] = p
+                st.session_state["nav"] = "Builder"
+                st.session_state["builder_sub"] = "Pick detail"
                 st.rerun()
 
-# ---------------- Track Record (the public proof page) ----------------
-with tab_record:
+# ---------------- Track: the public proof + paper ledger ----------------
+if nav == "Track":
+    st.segmented_control("Track section", ["Track Record", "Tracker"],
+                         key="track_sub", default="Track Record",
+                         label_visibility="collapsed")
+
+if nav == "Track" and st.session_state.get("track_sub", "Track Record") == "Track Record":
     st.subheader("Track Record")
     st.caption("We publish every pick. Grade us.")
     st.caption("Every model flag is logged here with its line at pick time "
@@ -1082,8 +1219,13 @@ with tab_record:
                 "stronger. Run a scan, log the flags, and this page grades "
                 "them all in public. Nothing hidden, nothing cherry-picked.")
 
-# ---------------- Builder (SGP-style, FREE to build) ----------------
-with tab_builder:
+# ---------------- Builder: SGP builder + pick drill-down ----------------
+if nav == "Builder":
+    st.segmented_control("Builder section", ["Builder", "Pick detail"],
+                         key="builder_sub", default="Builder",
+                         label_visibility="collapsed")
+
+if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Builder":
     from builder import legs as blegs
     from builder import saves as bsaves
     from compare import compare as cmp_mod
@@ -1211,8 +1353,7 @@ with tab_builder:
                         bsaves.delete_build(_s["id"])
                         st.rerun()
 
-# ---------------- Pick detail ----------------
-with tab_detail:
+if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Pick detail":
     # "Details" on a Scan card stores the pick itself (filters change the
     # list order, so a bare index would point at the wrong pick).
     _sel = st.session_state.get("selected_pick")
@@ -1245,8 +1386,7 @@ with tab_detail:
             st.caption(f"Projection based on {p.get('n_games', '?')} games "
                        f"(recency-weighted, {_window_txt}).")
 
-# ---------------- Tracker ----------------
-with tab_tracker:
+if nav == "Track" and st.session_state.get("track_sub", "Track Record") == "Tracker":
     s = db.weekly_summary(days=7)
     st.subheader("Paper record — last 7 days")
     m1, m2, m3, m4 = st.columns(4)
@@ -1270,8 +1410,118 @@ with tab_tracker:
     else:
         st.info("No paper picks logged yet. Run a scan and log the flags.")
 
+# ---------------- Teams ----------------
+if nav == "Teams":
+    from teams import hub as team_hub
+    from tendencies import formations as form_mod
+    from tendencies import team as tteam
+    import pandas as pd
+
+    st.subheader("Team hub")
+    if sport != "nfl":
+        st.info("Team hub covers the NFL for now — NBA/MLB team pages "
+                "are coming with the live season.")
+    else:
+        try:
+            _teams = _teams_list()
+            _tabbrs = [t["abbr"] for t in _teams]
+            _t_abbr = st.selectbox(
+                "Team", _tabbrs, key="team_hub_pick",
+                format_func=lambda a: next(
+                    (f"{t['abbr']} — {t['name']}" for t in _teams
+                     if t["abbr"] == a), a))
+            _season, _week = _cur_week()
+            _rec = team_hub.team_record(_schedules_df(), _t_abbr, _season)
+            _sched = team_hub.team_schedule(_schedules_df(), _t_abbr, _season,
+                                            _week)
+            _r1, _r2, _r3 = st.columns(3)
+            _r1.metric("Record",
+                       f"{_rec['wins']}-{_rec['losses']}"
+                       + (f"-{_rec['ties']}" if _rec["ties"] else ""))
+            _r2.metric("Games played", _rec["games"])
+            _r3.metric("Next", (f"{_sched[0]['home_away']} {_sched[0]['opponent']}"
+                                f" (wk {_sched[0]['week']})") if _sched else "—")
+            if _sched:
+                st.markdown("**Upcoming schedule**")
+                import pandas as pd
+                st.dataframe(pd.DataFrame([
+                    {"wk": g["week"], "game": f"{g['home_away']} {g['opponent']}",
+                     "date": g["date"]} for g in _sched[:6]
+                ]), use_container_width=True, hide_index=True)
+
+            st.markdown("**How they play — run/pass**")
+            try:
+                _pbp = _pbp_df("2024,2025,2026")
+                _splits = tteam.run_pass_splits(_pbp, _t_abbr)
+                _c1, _c2, _c3 = st.columns(3)
+                _c1.metric("Run rate",
+                           f"{_splits['run_rate']:.0%}"
+                           if _splits.get("run_rate") is not None else "—")
+                _c2.metric("Pass rate",
+                           f"{_splits['pass_rate']:.0%}"
+                           if _splits.get("pass_rate") is not None else "—")
+                _c3.metric("Snaps (sample)", _splits.get("snaps", 0))
+
+                st.markdown("**Formations — what looks they favor**")
+                st.caption(form_mod.HONEST_LABEL)
+                _fd = form_mod.formation_detail(_pbp, _t_abbr)
+                _f1, _f2, _f3 = st.columns(3)
+                _f1.metric("Shotgun",
+                           f"{_fd['shotgun_rate']:.0%}"
+                           if _fd.get("shotgun_rate") is not None else "—")
+                _f2.metric("No-huddle",
+                           f"{_fd['no_huddle_rate']:.0%}"
+                           if _fd.get("no_huddle_rate") is not None else "—")
+                _f3.metric("Red-zone run%",
+                           f"{_fd['red_zone_run_rate']:.0%}"
+                           if _fd.get("red_zone_run_rate") is not None else "—")
+                _sg = _fd.get("run_rate_shotgun")
+                _uc = _fd.get("run_rate_under_center")
+                if _sg is not None and _uc is not None:
+                    st.caption(f"Run rate: {_sg:.0%} out of shotgun vs "
+                               f"{_uc:.0%} under center "
+                               f"({_fd.get('shotgun_snaps', 0)} / "
+                               f"{_fd.get('under_center_snaps', 0)} snaps)")
+                if _fd.get("run_direction"):
+                    st.markdown("**Where runs go**")
+                    st.dataframe(pd.DataFrame([
+                        {"direction": r["direction"].title(),
+                         "share": f"{r['share']:.0%}", "n": r["n"]}
+                        for r in _fd["run_direction"]
+                    ]), use_container_width=True, hide_index=True)
+                if _fd.get("pass_location"):
+                    st.markdown("**Where passes go**")
+                    st.dataframe(pd.DataFrame([
+                        {"location": r["location"].title(),
+                         "share": f"{r['share']:.0%}", "n": r["n"]}
+                        for r in _fd["pass_location"]
+                    ]), use_container_width=True, hide_index=True)
+            except Exception as _e:
+                st.caption(f"Tendency data unavailable right now. ({_e})")
+
+            st.markdown("**Key players**")
+            try:
+                _leaders = team_hub.team_leaders(_player_stats_df(), _t_abbr,
+                                                 _season)
+                _lcols = st.columns(3)
+                for (_lc, (_lbl, _vals)) in zip(
+                        _lcols, [("Pass yds", _leaders["pass_yds"]),
+                                 ("Rush yds", _leaders["rush_yds"]),
+                                 ("Rec yds", _leaders["rec_yds"])]):
+                    with _lc:
+                        st.markdown(f"**{_lbl}**")
+                        if _vals:
+                            for _v in _vals:
+                                st.caption(f"{_v['name']} — {_v['yds']:,}")
+                        else:
+                            st.caption("—")
+            except Exception:
+                st.caption("Player stats unavailable right now.")
+        except Exception as _e:
+            st.info(f"Team data isn't cached yet. ({_e})")
+
 # ---------------- Players ----------------
-with tab_players:
+if nav == "Players":
     from players import profiles
     from players import search as psearch
     from players import suggest as psuggest
@@ -1363,10 +1613,44 @@ with tab_players:
             else:
                 st.caption("No game log available.")
 
+            # --- Recent form: last-5 vs season average ---
+            try:
+                form = profiles.player_form_summary(
+                    _player_stats_df(), player_name,
+                    (bio or {}).get("position"), season)
+                if form and form.get("games"):
+                    st.markdown(f"**Recent form — {form['label']}**")
+                    _l5 = form["last5"]
+                    _l5avg = (sum(_l5) / len(_l5)) if _l5 else 0
+                    _f1, _f2 = st.columns(2)
+                    _f1.metric("Season avg", form["season_avg"])
+                    _f2.metric(
+                        "Last 5 avg", round(_l5avg, 1),
+                        delta=f"{_l5avg - form['season_avg']:+.1f} vs season")
+                    st.caption(f"{form['games']} games · last 5: "
+                               f"{', '.join(str(v) for v in _l5)}")
+            except Exception:
+                pass
+
             mu = profiles.upcoming_matchup(_schedules_df(), team_abbr, season, week)
             if mu:
                 st.caption(f"Next: {mu['home_away']} {mu['opponent']} "
                            f"(wk {mu['week']}, {mu['date']})")
+                # Matchup context: how the opponent plays.
+                try:
+                    from tendencies import team as _tt
+                    _opp = mu["opponent"]
+                    _opp_splits = _tt.run_pass_splits(
+                        _pbp_df("2024,2025,2026"), _opp)
+                    if _opp_splits.get("pass_rate") is not None:
+                        st.caption(
+                            f"Matchup context: {_opp} "
+                            f"{'passes' if _opp_splits['pass_rate'] >= 0.5 else 'runs'} "
+                            f"{max(_opp_splits['pass_rate'], _opp_splits['run_rate']):.0%} "
+                            f"of the time — "
+                            f"{'expect shootout pace' if _opp_splits['pass_rate'] >= 0.58 else 'expect a ground game' if _opp_splits['run_rate'] >= 0.5 else 'balanced offense'}.")
+                except Exception:
+                    pass
 
             st.markdown("**Related headlines**")
             try:
@@ -1386,8 +1670,14 @@ with tab_players:
         for line in preseason_mod.summary_lines():
             st.caption(line)
 
-# ---------------- Tendencies ----------------
-with tab_tend:
+# ---------------- Intel: tendencies, news, alerts ----------------
+if nav == "Intel":
+    st.segmented_control("Intel section",
+                         ["Tendencies", "News", "Alerts"],
+                         key="intel_sub", default="Tendencies",
+                         label_visibility="collapsed")
+
+if nav == "Intel" and st.session_state.get("intel_sub", "Tendencies") == "Tendencies":
     from tendencies import team as tteam
     from tendencies import player as tplayer
     from tendencies import plays as tplays
@@ -1457,8 +1747,7 @@ with tab_tend:
         st.info("Tendency data needs charted play-by-play — it downloads on "
                 f"first use (free, ~50MB/season, cached). ({e})")
 
-# ---------------- News ----------------
-with tab_news:
+if nav == "Intel" and st.session_state.get("intel_sub", "Tendencies") == "News":
     from news import espn as news_mod
 
     st.subheader("NFL news + injury report")
@@ -1486,8 +1775,7 @@ with tab_news:
     except Exception as e:
         st.info(f"News feed unavailable right now. ({e})")
 
-# ---------------- Alerts: line-movement watchlist (FREE) ----------------
-with tab_alerts:
+if nav == "Intel" and st.session_state.get("intel_sub", "Tendencies") == "Alerts":
     from alerts import watchlist as wl
     from builder import legs as _blegs_mod
 
@@ -1543,8 +1831,14 @@ with tab_alerts:
                 + "</div>",
                 unsafe_allow_html=True)
 
-# ---------------- Lab: backtest calibration (PREMIUM) ----------------
-with tab_lab:
+# ---------------- Lab: backtest + compare (PREMIUM) ----------------
+if nav == "Lab":
+    st.segmented_control("Lab section",
+                         ["Backtest Lab", "Compare"],
+                         key="lab_sub", default="Backtest Lab",
+                         label_visibility="collapsed")
+
+if nav == "Lab" and st.session_state.get("lab_sub", "Backtest Lab") == "Backtest Lab":
     from backtest import lab as blab
     from compare import compare as cmp_mod
 
@@ -1601,8 +1895,7 @@ with tab_lab:
                     st.info("No predictions in that range — try more weeks.")
                 st.caption(res["note"])
 
-# ---------------- Compare (PREMIUM) ----------------
-with tab_compare:
+if nav == "Lab" and st.session_state.get("lab_sub", "Backtest Lab") == "Compare":
     import config
     from compare import compare as cmp_mod
 
