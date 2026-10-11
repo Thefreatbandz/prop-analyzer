@@ -233,7 +233,9 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
                       photo_b64: str | None = None, jersey: str | None = None,
                       position: str | None = None, team: str | None = None,
                       sport: str = "nfl", negative: bool = False,
-                      form: dict | None = None) -> str:
+                      form: dict | None = None,
+                      safe_tier: dict | None = None,
+                      news_count: int = 0) -> str:
     """Neon Edge pick card (gold-on-charcoal): PLAYER INSIGHT header,
     prominent photo, market label, big gold line, last-10 hit-rate bar,
     Season avg / Last-5 avg boxes, model prob + edge, form bars, cold
@@ -245,6 +247,12 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
     When form is None the legacy bars/hit_html/cold_html strings are
     injected as-is (keeps older call sites and tests working); the new
     layout (header, big line, avgs) always renders.
+
+    safe_tier: {"line": float, "fair_p": float, "tier": "Safe"} — the
+    highest-probability model line for this player+market, rendered as
+    the prominent low-risk row. None hides the row.
+    news_count: recent headlines mentioning the player; renders the
+    "📰 N headlines" indicator. 0 hides it.
 
     Team colors: the card border/glow and jersey badge take the team's
     primary (or secondary when the primary is unreadably dark), plus a
@@ -363,6 +371,32 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
 
     _edge_line = edge_line_html(p, negative=negative)
     _edge_why = edge_explainer_html(p, negative=negative)
+    # Low-risk tier row (Tbandz): the model's highest-probability line
+    # for this player+market, prominent but compact.
+    safe_html = ""
+    if safe_tier:
+        try:
+            _sl = float(safe_tier["line"])
+            _sp = float(safe_tier["fair_p"])
+            safe_html = (
+                '<div class="neon-saferow">'
+                '<span class="btier-safe">SAFE</span> '
+                f'<span>Over {_sl:g} — <b>{_sp:.0%}</b> fair</span>'
+                "</div>"
+            )
+        except (KeyError, TypeError, ValueError):
+            safe_html = ""
+    # News indicator: subtle, honest — only when headlines exist.
+    news_html = ""
+    try:
+        if int(news_count or 0) > 0:
+            _n = int(news_count)
+            news_html = (
+                f'<div class="neon-news">📰 {_n} '
+                f'headline{"s" if _n != 1 else ""} — see News tab</div>'
+            )
+    except (TypeError, ValueError):
+        news_html = ""
     explore_html = (
         '<div class="neon-explore"><span>\U0001F4C8</span> '
         "Explore player trends</div>"
@@ -379,7 +413,8 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
         f'<div class="neon-edgebox"><div class="{ev_cls}">{ev_txt}</div>'
         f'<div class="ev-cap">EDGE</div>{prob_html}</div>'
         "</div>"
-        f"{line_html}{form_html}{_edge_line}{_edge_why}{explore_html}"
+        f"{line_html}{safe_html}{form_html}{_edge_line}{_edge_why}"
+        f"{news_html}{explore_html}"
         "</div>"
     )
 
@@ -519,6 +554,51 @@ def suggestion_card_safe(s: dict, rosters_df) -> str | None:
         )
     except Exception:
         return None
+
+
+def player_tile_html(name: str, *, team: str | None = None,
+                     position: str | None = None,
+                     photo_b64: str | None = None,
+                     n_props: int = 0,
+                     selected: bool = False,
+                     sport: str = "nfl") -> str:
+    """Compact player tile for the PrizePicks-style builder grid.
+
+    Circular photo (or gold initials fallback), name, team · position,
+    and a prop count. Selected tiles get the gold glow so the current
+    pick stands out. All interpolated text escaped — same rule as the
+    pick cards. The tap itself is a Streamlit button the caller renders
+    under this HTML.
+    """
+    from teams import colors as _tcolors
+
+    style = ""
+    accent = _tcolors.team_accent(team, sport=sport)
+    if accent:
+        accent_color, _tint = accent
+        style = (f' style="border-color:{accent_color};'
+                 f'box-shadow:0 0 14px {accent_color}40"')
+    if selected:
+        # Gold selection glow wins over the team accent.
+        style = (' style="border-color:#C9A227;'
+                 'box-shadow:0 0 18px #C9A22766"')
+    if photo_b64:
+        photo_html = f'<img src="{photo_b64}" alt="" loading="lazy">'
+    else:
+        photo_html = (f'<div class="ptile-initials">'
+                      f'{_escape(_headshots.initials(name))}</div>')
+    pos_html = (f' · {_escape(position)}' if position else "")
+    team_html = (f'<div class="ptile-team">{_escape(team or "")}'
+                 f'{pos_html}</div>' if team else "")
+    n_html = (f'<div class="ptile-n">{n_props} prop'
+              f'{"s" if n_props != 1 else ""}</div>' if n_props else "")
+    return (
+        f'<div class="ptile"{style}>'
+        f'<div class="ptile-photo">{photo_html}</div>'
+        f'<div class="ptile-name">{_escape(name)}</div>'
+        f'{team_html}{n_html}'
+        "</div>"
+    )
 
 
 def _accent_style(team: str | None) -> tuple[str, str]:

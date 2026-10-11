@@ -262,6 +262,40 @@ st.markdown(
                        font-weight: 600; font-variant-numeric: tabular-nums;
                        line-height: 1.4; }
     .scan-filter { color: var(--ink-dim); margin: 6px 0; }
+    /* ---- Builder player tiles (PrizePicks-style grid) ---- */
+    .ptile { border: 1px solid var(--line); border-radius: 12px;
+             padding: 10px 6px; margin-bottom: 8px; text-align: center;
+             background: linear-gradient(180deg, #18181c, var(--panel)); }
+    .ptile-photo img { width: 56px; height: 56px; border-radius: 50%;
+                       object-fit: cover; border: 2px solid var(--gold);
+                       background: #1c1c20; }
+    .ptile-initials { width: 56px; height: 56px; border-radius: 50%;
+                      background: #232327; border: 2px solid var(--line);
+                      display: inline-flex; align-items: center;
+                      justify-content: center; font-weight: 800;
+                      color: var(--gold); font-size: 1.1em; }
+    .ptile-name { font-weight: 800; font-size: 0.85em; line-height: 1.25;
+                  margin-top: 6px; }
+    .ptile-team { color: var(--ink-dim); font-size: 0.72em; margin-top: 1px; }
+    .ptile-n { color: var(--gold); font-size: 0.72em; margin-top: 3px;
+               font-weight: 700; }
+    /* ---- Builder prop rows (PrizePicks-style More/Less) ---- */
+    .bprop-row { border: 1px solid var(--line); border-radius: 10px;
+                 padding: 8px 12px; margin-bottom: 6px;
+                 background: var(--panel); }
+    .bprop-label { font-weight: 700; font-size: 0.92em; }
+    .bprop-line { color: var(--gold); font-weight: 800; font-size: 1.05em;
+                  font-variant-numeric: tabular-nums; }
+    .bprop-books { color: var(--ink-dim); font-size: 0.72em; }
+    .bprop-fair { color: var(--ink-dim); font-size: 0.85em;
+                  font-variant-numeric: tabular-nums; }
+    .btier { display: inline-block; padding: 3px 10px; border-radius: 999px;
+             font-size: 10px; font-weight: 800; letter-spacing: 1px;
+             border: 1px solid var(--line); color: var(--ink-dim); }
+    .btier-safe { display: inline-block; padding: 3px 10px; border-radius: 999px;
+                  font-size: 10px; font-weight: 800; letter-spacing: 1px;
+                  border: 1px solid var(--gold); color: var(--gold);
+                  box-shadow: 0 0 10px #C9A22744; }
 
     /* ---- Trading cards: photo + jersey badge + name plate ---- */
     .tcard-top { display: flex; gap: 12px; align-items: flex-start; }
@@ -326,6 +360,14 @@ st.markdown(
                     border: 1px solid var(--line); border-radius: 10px;
                     padding: 10px 12px; color: var(--ink-dim); font-size: 0.9em;
                     font-weight: 600; text-align: center; }
+    .neon-saferow { margin-top: 8px; background: #1e1e23;
+                    border: 1px solid var(--gold); border-radius: 10px;
+                    padding: 8px 12px; font-size: 0.9em;
+                    box-shadow: 0 0 12px #C9A22733; }
+    .neon-saferow b { color: var(--gold);
+                      font-variant-numeric: tabular-nums; }
+    .neon-news { margin-top: 8px; color: var(--ink-dim); font-size: 0.82em;
+                 text-align: center; }
     .pc-cold { color: #C46A6A; font-size: 0.88em; margin-top: 8px;
                font-weight: 600; }
     .pc-edge-line { color: var(--ink-dim); font-size: 0.85em; margin-top: 8px;
@@ -948,6 +990,13 @@ if nav == "Home":
 
     # --- Top edges snapshot ---
     if prop_picks:
+        from builder import picker as _bpicker
+        _card_dists = _load_dists(model_mode, sport)
+        try:
+            from news import espn as _news_mod
+            _card_news = _espn_news() if sport == "nfl" else []
+        except Exception:
+            _card_news, _news_mod = [], None
         st.markdown("**Top edges right now**")
         _hcols = st.columns(min(len(prop_picks[:4]), 4))
         for _i, _p in enumerate(prop_picks[:4]):
@@ -973,11 +1022,24 @@ if nav == "Home":
                 except Exception:
                     pass
                 _form = _card_form(_p, _p_sport)
+                try:
+                    _safe = _bpicker.safe_tier_leg(
+                        _p["player"], _p["market"], _card_dists)
+                except Exception:
+                    _safe = None
+                try:
+                    _nhits = (len(_news_mod.news_for_player(
+                        _card_news, _p["player"]))
+                        if _news_mod is not None and _p_sport == "nfl"
+                        else 0)
+                except Exception:
+                    _nhits = 0
                 st.markdown(
                     ui_cards.trading_card_html(
                         _p, matchup_html=_mu_html, form=_form,
                         photo_b64=_photo, jersey=_jersey, position=_pos,
-                        sport=_p_sport),
+                        sport=_p_sport, safe_tier=_safe,
+                        news_count=_nhits),
                     unsafe_allow_html=True)
         st.divider()
 
@@ -1213,6 +1275,13 @@ if nav == "Scan":
             n = sum(1 for p in picks if db.log_pick(p))
             st.success(f"Logged {n} paper picks (1 unit each).")
         from players import headshots as _hs
+        from builder import picker as _bpicker2
+        _scan_dists = _load_dists(model_mode, sport)
+        try:
+            from news import espn as _news_mod2
+            _scan_news = _espn_news() if sport == "nfl" else []
+        except Exception:
+            _scan_news, _news_mod2 = [], None
 
         for i, p in enumerate(picks):
             # Trading-card anatomy (phone-first, single column):
@@ -1258,6 +1327,18 @@ if nav == "Scan":
                     _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
                                 if p.get("team") else "")
                 _form = _card_form(p, _p_sport)
+                try:
+                    _safe2 = _bpicker2.safe_tier_leg(
+                        p["player"], p["market"], _scan_dists)
+                except Exception:
+                    _safe2 = None
+                try:
+                    _nhits2 = (len(_news_mod2.news_for_player(
+                        _scan_news, p["player"]))
+                        if _news_mod2 is not None and _p_sport == "nfl"
+                        else 0)
+                except Exception:
+                    _nhits2 = 0
                 st.markdown(
                     ui_cards.trading_card_html(
                         p,
@@ -1268,6 +1349,8 @@ if nav == "Scan":
                         position=_pos,
                         sport=_p_sport,
                         negative=_fades_mode,
+                        safe_tier=_safe2,
+                        news_count=_nhits2,
                     ),
                     unsafe_allow_html=True)
                 # Explore-trends jump: the card's affordance is visual;
@@ -1357,62 +1440,157 @@ if nav == "Builder":
 
 if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Builder":
     from builder import legs as blegs
+    from builder import picker as bpicker
     from builder import saves as bsaves
     from compare import compare as cmp_mod
+    from players import headshots as _bhs
 
     st.subheader("Prop builder")
-    st.caption("Assemble a same-game parlay leg by leg. Each leg is priced "
-               "with our model — the combined number assumes the legs are "
-               "independent, and they aren't. Read the caution.")
+    st.caption("Pick a player, tap More or Less on their props — each leg is "
+               "priced with our model. The combined number assumes the legs "
+               "are independent, and they aren't. Read the caution.")
 
     if "builder_legs" not in st.session_state:
         st.session_state["builder_legs"] = []
     _blegs = st.session_state["builder_legs"]
+    _dists = _load_dists(model_mode, sport)
+    _board, _board_note = _live_board(sport)
 
-    with st.form("add_leg", clear_on_submit=True):
-        _bml = st.checkbox("Moneyline leg (instead of a player prop)")
-        if _bml:
-            _bp = st.text_input("Team", placeholder="e.g. Chiefs")
-            _bfair = st.number_input("Your fair win % for this team",
-                                     min_value=1.0, max_value=99.0,
-                                     value=55.0, step=1.0)
-            _bm, _bs, _bl = "moneyline", "win", 0.0
-        else:
-            _bp = st.text_input("Player", placeholder="e.g. Josh Allen")
-            _bm = st.selectbox(
-                "Stat", list(blegs.BUILDER_MARKETS.keys()),
-                format_func=lambda m: blegs.BUILDER_MARKETS[m])
-            _bs = st.pills("Side", ["Over", "Under"], default="Over",
-                           key="bleg_side", label_visibility="collapsed")
-            _bl = st.number_input("Line", value=250.0, step=0.5)
-            _bfair = None
-        _add = st.form_submit_button("Add leg", type="primary")
+    # ---------- PrizePicks-style player picker ----------
+    _players = bpicker.board_players(_board)
+    if _board_note:
+        st.caption(_board_note)
+    _sel_player = st.session_state.get("builder_player")
+    # The selected player may have fallen off the board — clear quietly.
+    if _sel_player and not any(pl["player"] == _sel_player for pl in _players):
+        _sel_player = None
+        st.session_state["builder_player"] = None
 
-    if _add:
-        if not _bp.strip():
-            st.warning("Name the player (or team) first.")
-        elif _bml:
-            _blegs.append({
-                "player": _bp.strip(), "market": "moneyline",
-                "label": "Moneyline", "side": "win", "line": None,
-                "fair_p": round(_bfair / 100, 4),
-                "note": "your estimate — we don't model team win prob yet",
-            })
-            st.rerun()
-        else:
-            priced = blegs.price_leg(_bp.strip(), _bm, _bs.lower(),
-                                     float(_bl), _load_dists(model_mode))
-            if priced is None:
-                st.warning(
-                    f"No projection for {_bp.strip()} on "
-                    f"{blegs.BUILDER_MARKETS[_bm]} — check the spelling "
-                    f"(must match the roster, e.g. 'Josh Allen').")
-            else:
-                _blegs.append(priced)
+    if not _players:
+        st.info("No players on the board right now — books haven't posted "
+                "props yet, or the feed is down. Check back later.")
+    elif not _sel_player:
+        _bq = st.text_input("Find a player", placeholder="e.g. allen",
+                            key="builder_search", label_visibility="collapsed")
+        _shown = [pl for pl in _players
+                  if not _bq or _bq.lower() in pl["player"].lower()]
+        if not _shown:
+            st.caption("No matches — check spelling.")
+        # 3-across grid of photo tiles, like the homepage cards.
+        for _r in range(0, len(_shown), 3):
+            _cols = st.columns(3)
+            for _c, _pl in enumerate(_shown[_r:_r + 3]):
+                with _cols[_c]:
+                    try:
+                        if sport == "nfl":
+                            _ph = _bhs.headshot_b64(_pl["player"],
+                                                    _rosters_df())
+                            _pos = _bhs.position_abbr(_pl["player"],
+                                                      _rosters_df())
+                        else:
+                            _ph = _bhs.photo_for_sport(_pl["player"], sport)
+                            _pos = None
+                    except Exception:
+                        _ph, _pos = None, None
+                    st.markdown(
+                        ui_cards.player_tile_html(
+                            _pl["player"], team=_pl.get("team"),
+                            position=_pos, photo_b64=_ph,
+                            n_props=len(_pl["markets"]), sport=sport),
+                        unsafe_allow_html=True)
+                    if st.button("Select", key=f"bpk_sel_{_pl['player']}"):
+                        st.session_state["builder_player"] = _pl["player"]
+                        st.rerun()
+    else:
+        # ---------- Prop rows for the selected player ----------
+        _pl = next(pl for pl in _players if pl["player"] == _sel_player)
+        _h1, _h2 = st.columns([4, 1])
+        with _h1:
+            st.markdown(f"### {_sel_player}")
+            if _pl.get("team"):
+                st.caption(_pl["team"])
+        with _h2:
+            if st.button("← All", key="bpk_back"):
+                st.session_state["builder_player"] = None
                 st.rerun()
+        _rows = bpicker.priceable_markets(_board, _sel_player, _dists)
+        if not _rows:
+            st.info(f"No model-priced props for {_sel_player} right now.")
+        else:
+            # Market tabs, PrizePicks-style. Key includes the player so
+            # switching players resets the tab.
+            _mkt_labels = {r["market"]: r["label"] for r in _rows}
+            _mkt_key = ("bpk_mkt_" + _sel_player).replace(" ", "_")
+            _mkt = st.pills(
+                "Stat", list(_mkt_labels.keys()),
+                format_func=lambda m: _mkt_labels[m],
+                default=_rows[0]["market"], key=_mkt_key,
+                label_visibility="collapsed")
+            _mkt = _mkt or _rows[0]["market"]
+            _row = next(r for r in _rows if r["market"] == _mkt)
+            st.caption(f"Book line: {_row['line']:g} "
+                       f"({_row['n_books']} book"
+                       f'{"s" if _row["n_books"] != 1 else ""})')
+            # ---------- Risk tiers: pick your risk level ----------
+            # Tbandz's rule: test parlays default LOW-risk. Each tier is
+            # a model-derived line with its honest fair probability.
+            _tiers = bpicker.tier_legs(_sel_player, _mkt, _dists)
+            _key_base = (f"bpk_{_sel_player}_{_mkt}".replace(" ", "_"))
+            _already = bpicker.slip_has(_blegs, _sel_player, _mkt)
+            for _t in _tiers:
+                _tc1, _tc2, _tc3, _tc4 = st.columns([1.1, 2.4, 1, 1])
+                _badge = ("SAFE" if _t["tier"] == "Safe"
+                          else _t["tier"].upper())
+                _bcls = ("btier-safe" if _t["tier"] == "Safe"
+                         else "btier")
+                with _tc1:
+                    st.markdown(f'<span class="{_bcls}">{_badge}</span>',
+                                unsafe_allow_html=True)
+                with _tc2:
+                    st.markdown(
+                        f'<span class="bprop-line">Over {_t["line"]:g}</span> '
+                        f'<span class="bprop-fair">{_t["fair_p"]:.0%} fair</span>')
+                _tkey = f"{_key_base}_{_t['tier']}"
+                if _already:
+                    _tc3.caption("✓ in slip")
+                else:
+                    with _tc3:
+                        if st.button("More", key=f"{_tkey}_over"):
+                            _blegs.append(_t)
+                            st.rerun()
+                    with _tc4:
+                        if st.button("Less", key=f"{_tkey}_under"):
+                            _leg_u = blegs.price_leg(
+                                _sel_player, _mkt, "under",
+                                _t["line"], _dists)
+                            if _leg_u:
+                                _blegs.append(_leg_u)
+                                st.rerun()
+            # One-tap low-risk slip: the Safe over for every priceable
+            # market. This is the default Tbandz asked for.
+            if st.button("＋ Add all Safe overs (low risk)",
+                         key=f"{_key_base}_safeall"):
+                _added = 0
+                for _r2 in _rows:
+                    if bpicker.slip_has(_blegs, _sel_player, _r2["market"]):
+                        continue
+                    _tl = bpicker.tier_legs(_sel_player, _r2["market"],
+                                            _dists)
+                    _safe = next((t for t in _tl if t["tier"] == "Safe"),
+                                 None)
+                    if _safe:
+                        _blegs.append(_safe)
+                        _added += 1
+                if _added:
+                    st.rerun()
+                else:
+                    st.caption("Safe legs already on the slip.")
 
+    st.divider()
+    # ---------- Slip (legs, combined probability, honesty caution) ----------
+    st.markdown("**Your slip**")
     if not _blegs:
-        st.info("No legs yet — add your first leg above. Building is free; "
+        st.info("No legs yet — pick a player above. Building is free; "
                 "saving the slip is Premium.")
     else:
         for _i, _leg in enumerate(_blegs):
@@ -1421,9 +1599,11 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 _desc = (f"**{_leg['player']}** moneyline — your fair "
                          f"estimate **{_leg['fair_p']:.0%}**")
             else:
+                _lbl = _leg.get("label") or bpicker.market_label(
+                    _leg["market"], sport)
+                _tier_txt = (f" [{_leg['tier']}]" if _leg.get("tier") else "")
                 _desc = (f"**{_leg['player']}** {_leg['side']} "
-                         f"{_leg['line']:g} "
-                         f"{blegs.BUILDER_MARKETS.get(_leg['market'], _leg['market'])}"
+                         f"{_leg['line']:g} {_lbl}{_tier_txt}"
                          f" — fair P **{_leg['fair_p']:.1%}**")
             _c1.markdown(_desc)
             if _c2.button("Remove", key=f"bleg_rm_{_i}"):
@@ -1482,6 +1662,50 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                     if _sc2.button("Delete", key=f"bsave_del_{_s['id']}"):
                         bsaves.delete_build(_s["id"])
                         st.rerun()
+
+    # ---------- Manual add (fallback for players off the board) ----------
+    with st.expander("Add a leg manually"):
+        with st.form("add_leg", clear_on_submit=True):
+            _bml = st.checkbox("Moneyline leg (instead of a player prop)")
+            if _bml:
+                _bp = st.text_input("Team", placeholder="e.g. Chiefs")
+                _bfair = st.number_input("Your fair win % for this team",
+                                         min_value=1.0, max_value=99.0,
+                                         value=55.0, step=1.0)
+                _bm, _bs, _bl = "moneyline", "win", 0.0
+            else:
+                _bp = st.text_input("Player", placeholder="e.g. Josh Allen")
+                _bm = st.selectbox(
+                    "Stat", bpicker.markets_for_sport(sport),
+                    format_func=lambda m: bpicker.market_label(m, sport))
+                _bs = st.pills("Side", ["Over", "Under"], default="Over",
+                               key="bleg_side", label_visibility="collapsed")
+                _bl = st.number_input("Line", value=250.0, step=0.5)
+                _bfair = None
+            _add = st.form_submit_button("Add leg", type="primary")
+
+        if _add:
+            if not _bp.strip():
+                st.warning("Name the player (or team) first.")
+            elif _bml:
+                _blegs.append({
+                    "player": _bp.strip(), "market": "moneyline",
+                    "label": "Moneyline", "side": "win", "line": None,
+                    "fair_p": round(_bfair / 100, 4),
+                    "note": "your estimate — we don't model team win prob yet",
+                })
+                st.rerun()
+            else:
+                priced = blegs.price_leg(_bp.strip(), _bm, _bs.lower(),
+                                         float(_bl), _dists)
+                if priced is None:
+                    st.warning(
+                        f"No projection for {_bp.strip()} on "
+                        f"{bpicker.market_label(_bm, sport)} — check the spelling "
+                        f"(must match the roster, e.g. 'Josh Allen').")
+                else:
+                    _blegs.append(priced)
+                    st.rerun()
 
 if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Pick detail":
     # "Details" on a Scan card stores the pick itself (filters change the
