@@ -563,13 +563,18 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
     try:
         raw_props = lumify.get_player_props(sport=sport)
         props = lumify.normalize(raw_props, sport=sport)
+        # Full-slate honesty: count the distinct games behind the props.
+        # Prefer the events_covered metadata; fall back to the per-prop
+        # game tags normalize() stamps (robust if the board shape shifts).
         _games_covered = raw_props.get("events_covered") or []
-        if _games_covered and os.environ.get("LUMIFY_API_KEY"):
-            _gl = ", ".join(g.get("label", "") for g in _games_covered
-                            if g.get("label"))
-            props_note = (f"Full slate: {len(_games_covered)} games "
-                          f"({_gl})" if _gl else
-                          f"Full slate: {len(_games_covered)} games")
+        _game_labels = [g.get("label", "") for g in _games_covered
+                        if g.get("label")]
+        if not _game_labels:
+            _game_labels = sorted({r.get("game", "") for r in props
+                                   if r.get("game")})
+        if _game_labels and os.environ.get("LUMIFY_API_KEY"):
+            _gl = ", ".join(_game_labels)
+            props_note = (f"Full slate: {len(_game_labels)} games ({_gl})")
         if not os.environ.get("LUMIFY_API_KEY"):
             # get_player_props() silently served the bundled sample —
             # label it honestly so nobody mistakes it for the live board.
