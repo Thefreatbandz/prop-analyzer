@@ -128,6 +128,12 @@ def _fetch_thumbnail(url: str, cache_key: str, cache_dir: str,
     Never raises — a missing photo is a UI fallback (initials), not an
     error. cache_key is sanitized to [A-Za-z0-9_-] (no path traversal).
     """
+    # Defense in depth: only http(s) URLs are fetched. The NFL roster
+    # feed supplies headshot_url; a poisoned feed entry must not turn
+    # this into a file:// or internal-host fetch (SSRF).
+    scheme = (url or "").strip().lower().split(":", 1)[0]
+    if scheme not in ("http", "https"):
+        return None
     sid = re.sub(r"[^A-Za-z0-9_-]+", "_", cache_key or "unknown")[:64] or "unknown"
     os.makedirs(cache_dir, exist_ok=True)
     thumb = _thumb_path(cache_dir, sid)

@@ -23,6 +23,8 @@ SEASONS = ["2025-26", "2024-25", "2023-24"]
 # are limited and rotations experimental, so it's signal with an asterisk.
 PRESEASON_SEASON = "2026-27"
 PRESEASON_TTL = 6 * 60 * 60  # games nightly — refresh faster than regular data
+_NBA_TIMEOUT = 30  # seconds — nba_api defaults to NO timeout; a hung
+                   # stats.nba.com call must not stall a scan forever  # games nightly — refresh faster than regular data
 MAX_AGE_SECONDS = 24 * 60 * 60
 
 # Columns we keep from the game log, in a stable order.
@@ -148,7 +150,8 @@ def player_game_log(name: str, force: bool = False):
         for season in SEASONS:
             try:
                 df = playergamelog.PlayerGameLog(
-                    player_id=pid, season=season).get_data_frames()[0]
+                    player_id=pid, season=season,
+                    timeout=_NBA_TIMEOUT).get_data_frames()[0]
             except Exception as e:
                 _warn("nba game log pull failed for %s %s (%s)", name, season, e)
                 continue
@@ -221,7 +224,8 @@ def preseason_game_log(name: str, force: bool = False):
         from nba_api.stats.endpoints import playergamelog
         df = playergamelog.PlayerGameLog(
             player_id=pid, season=PRESEASON_SEASON,
-            season_type_all_star="Pre Season").get_data_frames()[0]
+            season_type_all_star="Pre Season",
+            timeout=_NBA_TIMEOUT).get_data_frames()[0]
     except Exception as e:
         _warn("nba preseason pull failed for %s (%s)", name, e)
         if os.path.exists(path):

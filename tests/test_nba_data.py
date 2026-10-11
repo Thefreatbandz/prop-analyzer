@@ -175,3 +175,26 @@ def test_nba_dist_tags_preseason_count():
     assert d is not None
     assert "preseason_games" in d
     assert isinstance(d["preseason_games"], int)
+
+
+def test_nba_api_calls_have_timeout(monkeypatch):
+    # 2026-10-11 security: nba_api defaults to timeout=None (hang forever).
+    # Every PlayerGameLog call must pass an explicit timeout.
+    import projections.nba_data as nba
+
+    seen = {}
+
+    class FakeLog:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def get_data_frames(self):
+            import pandas as pd
+            return [pd.DataFrame()]
+
+    import nba_api.stats.endpoints.playergamelog as pgl
+    monkeypatch.setattr(pgl, "PlayerGameLog", FakeLog)
+    monkeypatch.setattr(nba, "resolve_player_id", lambda name: 2544)
+    nba.player_game_log("LeBron James", force=True)
+    assert seen.get("timeout") == nba._NBA_TIMEOUT
+    assert isinstance(seen["timeout"], (int, float)) and seen["timeout"] > 0

@@ -502,3 +502,43 @@ def test_view_empty_state_names_the_player():
     # (wording spans two source lines; check both halves)
     assert "the market has this one priced " in src
     assert "Players** tab" in src
+
+
+def test_fetch_thumbnail_rejects_non_http_schemes(tmp_path):
+    # 2026-10-11 security: headshot_url comes from the roster feed — a
+    # poisoned entry must not turn the fetcher into a file:// or
+    # internal-host request (SSRF). Only http(s) is fetched.
+    from players import headshots
+
+    calls = []
+
+    def fake_fetch(url, timeout):
+        calls.append(url)
+        raise AssertionError("must not fetch")
+
+    for bad in ("file:///etc/passwd",
+                "ftp://example.com/x.jpg",
+                "javascript:alert(1)",
+                "data:image/jpeg;base64,AAA",
+                "",
+                "notaurl"):
+        out = headshots._fetch_thumbnail(bad, "k", str(tmp_path), fetch=fake_fetch)
+        assert out is None
+    assert calls == []
+
+    # https still works (mocked image)
+    import io
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buf, "JPEG")
+    raw = buf.getvalue()
+
+    class Resp:
+        headers = {"content-type": "image/jpeg"}
+        content = raw
+
+    out = headshots._fetch_thumbnail(
+        "https://cdn.example.com/p.jpg", "good",
+        str(tmp_path), fetch=lambda u, t: Resp())
+    assert out is not None and out.endswith(".jpg")
