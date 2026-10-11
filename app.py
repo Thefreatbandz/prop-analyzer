@@ -815,6 +815,7 @@ if nav == "Home":
     if _show:
         st.markdown(f"**{'Today' if _today else 'Up next'}**"
                     f" — {len(_show)} game{'s' if len(_show) != 1 else ''}")
+        from games import schedule as _gsched
         for _g in _show:
             _g = {**_g, "kickoff": _gsched.kickoff_label(_g["starts_at"])}
             st.markdown(ui_cards.game_row_html(_g), unsafe_allow_html=True)

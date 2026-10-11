@@ -96,3 +96,24 @@ def test_team_schedule_upcoming_only():
     assert len(s) == 2
     assert s[0]["opponent"] == "LAC" and s[0]["home_away"] == "vs"
     assert s[1]["opponent"] == "DEN" and s[1]["home_away"] == "@"
+
+
+def test_home_renders_no_exceptions():
+    # 2026-10-11: Home page referenced _gsched without importing it
+    # (NameError) — the import only existed in the Scan tab. The landing
+    # view must render clean since it's the default.
+    import os
+    from streamlit.testing.v1 import AppTest
+
+    # app.py calls load_dotenv(): running it in-process leaks the repo's
+    # .env (real LUMIFY_API_KEY) into os.environ, which flips later
+    # lumify tests from sample to live mode. Snapshot and restore.
+    _env = dict(os.environ)
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        at = AppTest.from_file(os.path.join(root, "app.py"), default_timeout=120)
+        at.run()
+        assert not at.exception, [str(e.value)[:120] for e in at.exception]
+    finally:
+        os.environ.clear()
+        os.environ.update(_env)
