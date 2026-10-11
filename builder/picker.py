@@ -135,12 +135,34 @@ def priceable_markets(board: list[dict], player: str,
     return ordered
 
 
+def board_dist_gaps(board: list[dict],
+                    distributions: dict) -> list[tuple]:
+    """(player, team, market) triples on the board with no model dist.
+
+    The bundled dist files only cover demo players — the caller builds
+    these gaps on demand so the live board is fully priced. Pure logic,
+    no model calls.
+    """
+    gaps = {
+        (r.get("player"), r.get("team"), r.get("market"))
+        for r in (board or [])
+        if r.get("player") and r.get("market")
+        and r["market"] not in (distributions.get(r["player"]) or {})
+    }
+    return sorted(gaps)
+
+
 def safe_tier_leg(player: str, market: str,
-                  distributions: dict) -> dict | None:
+                  distributions: dict, sims: int = 2_000) -> dict | None:
     """Just the Safe tier leg (highest-probability line) for a card.
 
     One Monte Carlo pricing instead of four — the cards show only the
     Safe row. None when the model can't price the market.
+
+    sims defaults to 2,000 (not 10,000): the cards render this on every
+    page load, uncached, once per card — 10k sims would add ~0.3s per
+    card. 2k sims is ±1% accurate and ~5x faster. The builder's own
+    tier_legs (user-initiated, one player at a time) keeps 10k.
     """
     from builder import legs as blegs
 
@@ -154,7 +176,7 @@ def safe_tier_leg(player: str, market: str,
     if not tiers:
         return None
     leg = blegs.price_leg(player, market, "over", tiers[0]["line"],
-                          distributions)
+                          distributions, sims=sims)
     if leg:
         leg["tier"] = tiers[0]["tier"]
     return leg
@@ -215,6 +237,10 @@ def tier_legs(player: str, market: str, distributions: dict,
     Each leg is priced with builder.legs.price_leg (Monte Carlo), so
     the displayed fair_p is the honest model number, not the tier
     target. Legs carry a "tier" field ("Safe"/"Standard"/...).
+
+    For side="under" the tiers are mirrored: "Safe" targets P(under)
+    ~= 85% (i.e. P(over) ~= 15%), so a Less tap on the Safe row adds a
+    genuinely low-risk under leg — never a ~9% trap at the over line.
     Empty when the model can't price the market.
     """
     from builder import legs as blegs
@@ -225,8 +251,11 @@ def tier_legs(player: str, market: str, distributions: dict,
     mean, std = dist.get("mean"), dist.get("std")
     if mean is None or not std or std <= 0:
         return []
+    tiers = RISK_TIERS
+    if side == "under":
+        tiers = [(name, 1.0 - target) for name, target in RISK_TIERS]
     out = []
-    for t in tier_lines(mean, std):
+    for t in tier_lines(mean, std, tiers=tiers):
         leg = blegs.price_leg(player, market, side, t["line"], distributions)
         if leg:
             leg["tier"] = t["tier"]

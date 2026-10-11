@@ -456,6 +456,42 @@ def _load_dists(model_mode: str, sport: str = "nfl") -> dict:
         return json.load(f)["projections"]
 
 
+@st.cache_data(ttl=6 * 3600, show_spinner="Building player projections...")
+def _build_board_dists(board_key: tuple, sport: str) -> dict:
+    """Model distributions for every (player, team, market) on the board.
+
+    The bundled dist files only cover a handful of demo players — without
+    this, live-board players have no model and the Builder tiers + Scan
+    stay dark. Built from local nflverse data, cached 6 hours. Players
+    with no NFL data are skipped, never faked.
+    """
+    from projections import build as pbuild
+    season, week = pbuild.current_nfl_week()
+    return pbuild.build_distributions(
+        [(p, t, m) for p, t, m in board_key], season, week)
+
+
+def _model_dists(board: list, model_mode: str, sport: str) -> dict:
+    """Bundled dists, plus on-demand builds for board players not covered.
+
+    Keeps the sample/live file semantics; just fills the gaps so the
+    live board is fully priced. NBA/MLB keep their bundled files for now.
+    """
+    dists = _load_dists(model_mode, sport)
+    if (sport or "nfl").lower() != "nfl":
+        return dists
+    from builder import picker as _pk
+    gaps = _pk.board_dist_gaps(board, dists)
+    if gaps:
+        try:
+            built = _build_board_dists(tuple(gaps), sport)
+        except Exception:
+            built = {}
+        for pl, mkts in (built or {}).items():
+            dists.setdefault(pl, {}).update(mkts)
+    return dists
+
+
 @st.cache_data(show_spinner="Pulling props board...")
 def _live_board(sport: str = "nfl"):
     # The raw normalized board (with per-book lines), for the alerts
@@ -514,7 +550,7 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
         # (which feed failed) is visible in dev mode via key_status.
         props_note = ("Couldn't reach the live props feed — "
                       "showing sample props for now.")
-    dists = _load_dists(model_mode, sport)
+    dists = _model_dists(props, model_mode, sport)
     scan_stats: dict = {}
     prop_picks = engine.rank_props(props, dists, min_ev=min_ev_pct / 100,
                                    stats=scan_stats)
@@ -581,7 +617,7 @@ def run_fades(model_mode: str, max_neg_ev_pct: float, sport: str = "nfl"):
     # Returns the most negative EV flags, worst first. NOT picks.
     sport = (sport or "nfl").lower()
     board, _note = _live_board(sport)
-    dists = _load_dists(model_mode, sport)
+    dists = _model_dists(board, model_mode, sport)
     fade_stats: dict = {}
     fades = engine.rank_fades(board, dists, max_ev=max_neg_ev_pct / 100,
                               stats=fade_stats)
@@ -991,7 +1027,7 @@ if nav == "Home":
     # --- Top edges snapshot ---
     if prop_picks:
         from builder import picker as _bpicker
-        _card_dists = _load_dists(model_mode, sport)
+        _card_dists = _model_dists(prop_picks, model_mode, sport)
         try:
             from news import espn as _news_mod
             _card_news = _espn_news() if sport == "nfl" else []
@@ -1276,7 +1312,7 @@ if nav == "Scan":
             st.success(f"Logged {n} paper picks (1 unit each).")
         from players import headshots as _hs
         from builder import picker as _bpicker2
-        _scan_dists = _load_dists(model_mode, sport)
+        _scan_dists = _model_dists(picks, model_mode, sport)
         try:
             from news import espn as _news_mod2
             _scan_news = _espn_news() if sport == "nfl" else []
@@ -1453,8 +1489,8 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
     if "builder_legs" not in st.session_state:
         st.session_state["builder_legs"] = []
     _blegs = st.session_state["builder_legs"]
-    _dists = _load_dists(model_mode, sport)
     _board, _board_note = _live_board(sport)
+    _dists = _model_dists(_board, model_mode, sport)
 
     # ---------- PrizePicks-style player picker ----------
     _players = bpicker.board_players(_board)
@@ -1534,11 +1570,17 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
             # ---------- Risk tiers: pick your risk level ----------
             # Tbandz's rule: test parlays default LOW-risk. Each tier is
             # a model-derived line with its honest fair probability.
-            _tiers = bpicker.tier_legs(_sel_player, _mkt, _dists)
+            # More and Less get their own mirrored lines — a Less tap on
+            # the Safe row adds a genuinely safe under, not a ~9% trap.
+            _tiers_o = bpicker.tier_legs(_sel_player, _mkt, _dists,
+                                         side="over")
+            _tiers_u = {t["tier"]: t for t in bpicker.tier_legs(
+                _sel_player, _mkt, _dists, side="under")}
             _key_base = (f"bpk_{_sel_player}_{_mkt}".replace(" ", "_"))
             _already = bpicker.slip_has(_blegs, _sel_player, _mkt)
-            for _t in _tiers:
-                _tc1, _tc2, _tc3, _tc4 = st.columns([1.1, 2.4, 1, 1])
+            for _t in _tiers_o:
+                _u = _tiers_u.get(_t["tier"])
+                _tc1, _tc2, _tc3 = st.columns([1.1, 2.2, 2.2])
                 _badge = ("SAFE" if _t["tier"] == "Safe"
                           else _t["tier"].upper())
                 _bcls = ("btier-safe" if _t["tier"] == "Safe"
@@ -1546,26 +1588,28 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 with _tc1:
                     st.markdown(f'<span class="{_bcls}">{_badge}</span>',
                                 unsafe_allow_html=True)
+                _tkey = f"{_key_base}_{_t['tier']}"
                 with _tc2:
                     st.markdown(
                         f'<span class="bprop-line">Over {_t["line"]:g}</span> '
                         f'<span class="bprop-fair">{_t["fair_p"]:.0%} fair</span>')
-                _tkey = f"{_key_base}_{_t['tier']}"
-                if _already:
-                    _tc3.caption("✓ in slip")
-                else:
-                    with _tc3:
-                        if st.button("More", key=f"{_tkey}_over"):
-                            _blegs.append(_t)
+                    if _already:
+                        st.caption("✓ in slip")
+                    elif st.button("More", key=f"{_tkey}_over"):
+                        _blegs.append(_t)
+                        st.rerun()
+                with _tc3:
+                    if _u is not None:
+                        st.markdown(
+                            f'<span class="bprop-line">Under '
+                            f'{_u["line"]:g}</span> '
+                            f'<span class="bprop-fair">{_u["fair_p"]:.0%} '
+                            f'fair</span>')
+                        if _already:
+                            st.caption("✓ in slip")
+                        elif st.button("Less", key=f"{_tkey}_under"):
+                            _blegs.append(_u)
                             st.rerun()
-                    with _tc4:
-                        if st.button("Less", key=f"{_tkey}_under"):
-                            _leg_u = blegs.price_leg(
-                                _sel_player, _mkt, "under",
-                                _t["line"], _dists)
-                            if _leg_u:
-                                _blegs.append(_leg_u)
-                                st.rerun()
             # One-tap low-risk slip: the Safe over for every priceable
             # market. This is the default Tbandz asked for.
             if st.button("＋ Add all Safe overs (low risk)",

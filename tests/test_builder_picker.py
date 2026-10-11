@@ -199,6 +199,38 @@ def test_safe_tier_leg_no_dist():
     assert picker.safe_tier_leg("Nobody", "player_pass_yds", {}) is None
 
 
+def test_safe_tier_leg_fast_sims():
+    """The card path uses fewer sims (page loads render once per card,
+    uncached); the line is identical, only the MC noise differs."""
+    dists = {"Drake Maye": {
+        "player_pass_yds": {"mean": 235.3, "std": 64.0, "n": 34}}}
+    fast = picker.safe_tier_leg("Drake Maye", "player_pass_yds", dists)
+    full = picker.safe_tier_leg("Drake Maye", "player_pass_yds", dists,
+                                sims=10_000)
+    assert fast["line"] == full["line"]
+    assert abs(fast["fair_p"] - full["fair_p"]) < 0.03
+
+
+def test_tier_legs_under_mirrored():
+    """Less taps get their own mirrored lines: the Safe under targets
+    P(under) ~= 85% — never the over line (a ~9% trap)."""
+    dists = {"Drake Maye": {
+        "player_pass_yds": {"mean": 235.3, "std": 64.0, "n": 34}}}
+    overs = picker.tier_legs("Drake Maye", "player_pass_yds", dists,
+                             side="over")
+    unders = picker.tier_legs("Drake Maye", "player_pass_yds", dists,
+                              side="under")
+    assert [t["tier"] for t in overs] == [t["tier"] for t in unders]
+    o_safe = next(t for t in overs if t["tier"] == "Safe")
+    u_safe = next(t for t in unders if t["tier"] == "Safe")
+    assert u_safe["side"] == "under"
+    assert u_safe["fair_p"] > 0.75
+    # The under line is well above the over line (mirrored), and each
+    # side's line differs from the other's.
+    assert u_safe["line"] > o_safe["line"]
+    assert abs(u_safe["fair_p"] - 0.85) < 0.05
+
+
 def test_card_safe_tier_row():
     from ui import cards
     p = {"player": "Drake Maye", "market": "player_pass_yds", "line": 225.5,
@@ -231,3 +263,22 @@ def test_card_safe_tier_escapes():
          "ev_pct": 1.0}
     html = cards.trading_card_html(p, safe_tier={"line": "xx", "fair_p": {}})
     assert "SAFE" not in html  # malformed tier -> row hidden, card fine
+
+
+def test_board_dist_gaps():
+    board = [
+        {"player": "Josh Allen", "team": "BUF", "market": "player_pass_yds"},
+        {"player": "Josh Allen", "team": "BUF", "market": "player_rush_yds"},
+        {"player": "Dallen Bentley", "team": "NE", "market": "player_rec_yds"},
+        {"player": "", "team": "NE", "market": "player_rec_yds"},
+    ]
+    dists = {"Josh Allen": {"player_pass_yds": {"mean": 1, "std": 1}}}
+    gaps = picker.board_dist_gaps(board, dists)
+    assert gaps == [
+        ("Dallen Bentley", "NE", "player_rec_yds"),
+        ("Josh Allen", "BUF", "player_rush_yds"),
+    ]
+    # No gaps when everything is covered.
+    full = {"Josh Allen": {"player_pass_yds": {}, "player_rush_yds": {}},
+            "Dallen Bentley": {"player_rec_yds": {}}}
+    assert picker.board_dist_gaps(board, full) == []
