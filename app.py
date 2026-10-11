@@ -285,6 +285,47 @@ st.markdown(
     .tcard-name { font-size: 1.08em; font-weight: 800; line-height: 1.2; }
     .tcard-pos { color: var(--ink-dim); font-weight: 700; font-size: 0.8em;
                  margin-left: 7px; letter-spacing: 0.06em; }
+    /* ---- Neon Edge pick cards: PLAYER INSIGHT layout, gold on charcoal ---- */
+    .neon-head { display: flex; justify-content: space-between;
+                 align-items: center; margin-bottom: 10px; }
+    .neon-kicker { color: var(--ink-dim); font-size: 0.72em; font-weight: 800;
+                   letter-spacing: 0.22em; }
+    .neon-sport { color: var(--gold); font-size: 0.78em; font-weight: 700;
+                  letter-spacing: 0.08em; }
+    .neon-idrow { display: flex; gap: 12px; align-items: center;
+                  margin-bottom: 10px; }
+    .neon-id { flex: 1; min-width: 0; }
+    .neon-name { font-size: 1.12em; font-weight: 800; line-height: 1.2; }
+    .neon-edgebox { text-align: right; flex-shrink: 0; }
+    .neon-market { color: var(--ink-dim); font-size: 0.92em; margin-top: 2px; }
+    .neon-line { color: var(--gold); font-size: 2.0em; font-weight: 800;
+                 font-variant-numeric: tabular-nums; line-height: 1.15;
+                 text-shadow: 0 0 24px rgba(201,162,39,.35); }
+    .neon-line .pc-odds { font-size: 0.48em; }
+    .neon-book { color: var(--ink-dim); font-size: 0.88em; margin: 4px 0 10px; }
+    .neon-book b { color: var(--gold); }
+    .neon-hitbox { background: #1e1e23; border: 1px solid var(--line);
+                   border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+    .neon-hitrow { display: flex; justify-content: space-between;
+                   color: var(--ink-dim); font-size: 0.88em; margin-bottom: 8px; }
+    .neon-hitrow b { color: var(--ink); font-variant-numeric: tabular-nums; }
+    .neon-track { height: 8px; border-radius: 99px; background: #2a2a30;
+                  overflow: hidden; }
+    .neon-fill { height: 100%; border-radius: 99px; }
+    .neon-fill.hit-good { background: #7BC47F; }
+    .neon-fill.hit-bad { background: #C46A6A; }
+    .neon-fill.hit-mid { background: var(--gold); }
+    .neon-fill.hit-na { background: #3a3a40; }
+    .neon-avgs { display: flex; gap: 10px; margin-bottom: 10px; }
+    .neon-avg { flex: 1; background: #1e1e23; border: 1px solid var(--line);
+                border-radius: 10px; padding: 10px 12px; }
+    .neon-avg span { display: block; color: var(--ink-dim); font-size: 0.78em;
+                     margin-bottom: 2px; }
+    .neon-avg b { font-size: 1.35em; font-variant-numeric: tabular-nums; }
+    .neon-explore { margin-top: 10px; background: #1e1e23;
+                    border: 1px solid var(--line); border-radius: 10px;
+                    padding: 10px 12px; color: var(--ink-dim); font-size: 0.9em;
+                    font-weight: 600; text-align: center; }
     .pc-cold { color: #C46A6A; font-size: 0.88em; margin-top: 8px;
                font-weight: 600; }
     .pc-edge-line { color: var(--ink-dim); font-size: 0.85em; margin-top: 8px;
@@ -598,42 +639,125 @@ def _matchup_str(team_full: str) -> str:
     return ""
 
 
-def _card_form(p: dict, window: str) -> tuple[str, str, str]:
-    """(mini-bars HTML, hit-rate HTML, cold-line HTML) for a prop pick card.
+def _sport_stat_values(player: str, market: str, sport: str,
+                        n: int = 10) -> list:
+    """Last-n game values for a market, oldest first. [] when unavailable.
 
-    Graceful by design: no stat mapping, no cached data, or no games ->
-    empty strings, and the card renders fine without the form section.
-    The cold line ("Missed 4 of last 5 vs this line") is the honest
-    "what's not working" signal — a warning label, never a pick.
+    NBA: nba_api game logs (full_game_log: preseason + 3 seasons).
+    MLB: statcast pitch->game aggregation (batter or pitcher log by
+    market). Never raises — the card renders without form on failure.
     """
     try:
-        if not _player_stats_cached():
-            return "", "", ""
-        col = ui_cards.market_column(p["market"])
-        if not col:
-            return "", "", ""
-        games = _window_games(p["player"], window)
-        vals = [g[col] for g in games if g.get(col) is not None]
-        if not vals:
-            return "", "", ""
-        bars = ui_cards.mini_bars_html(vals, p["line"], p["side"])
-        hits, n = ui_cards.hit_stats(vals, p["line"], p["side"])
-        pct = hits / n if n else None
-        shade = ui_cards.hit_shade(pct)
-        if window == "Season":
-            _hn = f"{hits} of {n} this season"
-        else:
-            _hn = f"{hits} of last {n}"
-        hit_html = (
-            f'<div class="pc-hit">Hit <b>{_hn}</b> '
-            f"vs this line · "
-            f'<span class="{shade}">{pct:.0%}</span></div>'
-        )
-        _cold = ui_cards.cold_line(vals, p["line"], p["side"])
-        cold_html = f"Cold: {_cold}" if _cold else ""
-        return bars, hit_html, cold_html
+        if sport == "nba":
+            from projections import nba_data
+            col = ui_cards.market_column(market, "nba")
+            if not col:
+                return []
+            log = nba_data.full_game_log(player)
+            if log.height == 0:
+                return []
+            rows = log.to_dicts()[:n]  # newest first
+            if col == "PRA":
+                vals = [r["PTS"] + r["REB"] + r["AST"] for r in rows]
+            else:
+                vals = [r.get(col) for r in rows]
+            return [float(v) for v in vals if v is not None][::-1]
+        if sport == "mlb":
+            from projections import mlb_data
+            kind = ui_cards.mlb_log_kind(market)
+            col = ui_cards.market_column(market, "mlb")
+            if not col or not kind:
+                return []
+            log = (mlb_data.batter_game_log(player) if kind == "batter"
+                   else mlb_data.pitcher_game_log(player))
+            if log.height == 0:
+                return []
+            rows = log.to_dicts()[:n]  # newest first
+            vals = [r.get(col) for r in rows]
+            return [float(v) for v in vals if v is not None][::-1]
     except Exception:
-        return "", "", ""
+        pass
+    return []
+
+
+def _sport_season_avg(player: str, market: str, sport: str) -> float | None:
+    """Mean of the current season's games for the market's stat.
+
+    Honest by construction: None when there's no current-season data.
+    Never raises.
+    """
+    try:
+        if sport == "nba":
+            from projections import nba_data
+            col = ui_cards.market_column(market, "nba")
+            if not col:
+                return None
+            log = nba_data.full_game_log(player)
+            if log.height == 0:
+                return None
+            rows = [r for r in log.to_dicts() if not r.get("is_preseason")]
+            if not rows:
+                return None
+            # Most recent regular season in the log.
+            latest = rows[0].get("season")
+            vals = []
+            for r in rows:
+                if r.get("season") != latest:
+                    break
+                v = (r["PTS"] + r["REB"] + r["AST"] if col == "PRA"
+                     else r.get(col))
+                if v is not None:
+                    vals.append(float(v))
+            return sum(vals) / len(vals) if vals else None
+        if sport == "mlb":
+            vals = _sport_stat_values(player, market, "mlb", n=162)
+            return sum(vals) / len(vals) if vals else None
+    except Exception:
+        pass
+    return None
+
+
+def _card_form(p: dict, sport: str = "nfl") -> dict | None:
+    """Form-data dict for the Neon Edge pick card, or None when no data.
+
+    {"hits", "n", "season_avg", "last5_avg", "values", "cold"} —
+    hits/n are vs the POSTED line over the last 10 games (fewer when
+    the log is short — the card labels it honestly as "Last N").
+    The cold line ("Missed 4 of last 5 vs this line") is the honest
+    "what's not working" signal — a warning label, never a pick.
+
+    Graceful by design: no stat mapping, no cached data, or no games
+    -> None, and the card renders fine without the form section.
+    """
+    try:
+        line, side = p["line"], p["side"]
+        if sport == "nfl":
+            if not _player_stats_cached():
+                return None
+            col = ui_cards.market_column(p["market"], "nfl")
+            if not col:
+                return None
+            games10 = _window_games(p["player"], "Last 10")
+            vals = [g[col] for g in games10 if g.get(col) is not None]
+            games_s = _window_games(p["player"], "Season")
+            s_vals = [g[col] for g in games_s if g.get(col) is not None]
+            season_avg = (sum(s_vals) / len(s_vals)) if s_vals else None
+        else:
+            col = ui_cards.market_column(p["market"], sport)
+            if not col:
+                return None
+            vals = _sport_stat_values(p["player"], p["market"], sport, 10)
+            season_avg = _sport_season_avg(p["player"], p["market"], sport)
+        if not vals:
+            return None
+        hits, n = ui_cards.hit_stats(vals, line, side)
+        last5 = vals[-5:]
+        last5_avg = sum(last5) / len(last5) if last5 else None
+        cold = ui_cards.cold_line(vals, line, side)
+        return {"hits": hits, "n": n, "season_avg": season_avg,
+                "last5_avg": last5_avg, "values": vals, "cold": cold}
+    except Exception:
+        return None
 
 
 def _render_player_spotlight(name: str, team: str | None):
@@ -830,30 +954,30 @@ if nav == "Home":
             with _hcols[_i % 4]:
                 _p_sport = _p.get("sport", sport)
                 _mu_html = ""
-                _bars = _hit = _cold = ""
                 _photo = _jersey = _pos = None
-                if _p_sport == "nfl":
-                    _mu = _matchup_str(_p.get("team"))
-                    _mu_html = (f" · {_mu}" if _mu
-                                else f" · {html.escape(str(_p.get('team', '')))}")
-                    _bars, _hit, _cold = _card_form(_p, "5")
-                    try:
-                        from players import headshots as _hs
+                try:
+                    from players import headshots as _hs
+                    if _p_sport == "nfl":
+                        _mu = _matchup_str(_p.get("team"))
+                        _mu_html = (f" · {_mu}" if _mu
+                                    else f" · {html.escape(str(_p.get('team', '')))}")
                         _photo = _hs.headshot_b64(_p["player"],
                                                   _rosters_df())
                         _jersey = _hs.jersey_number(_p["player"],
                                                     _rosters_df())
                         _pos = _hs.position_abbr(_p["player"], _rosters_df())
-                    except Exception:
-                        pass
-                else:
-                    _mu_html = (f" · {html.escape(str(_p.get('team', '')))}"
-                                if _p.get("team") else "")
+                    else:
+                        _mu_html = (f" · {html.escape(str(_p.get('team', '')))}"
+                                    if _p.get("team") else "")
+                        _photo = _hs.photo_for_sport(_p["player"], _p_sport)
+                except Exception:
+                    pass
+                _form = _card_form(_p, _p_sport)
                 st.markdown(
                     ui_cards.trading_card_html(
-                        _p, matchup_html=_mu_html, bars=_bars,
-                        hit_html=_hit, cold_html=_cold, photo_b64=_photo,
-                        jersey=_jersey, position=_pos, sport=_p_sport),
+                        _p, matchup_html=_mu_html, form=_form,
+                        photo_b64=_photo, jersey=_jersey, position=_pos,
+                        sport=_p_sport),
                     unsafe_allow_html=True)
         st.divider()
 
@@ -1034,9 +1158,7 @@ if nav == "Scan":
         _side = st.pills("Side", ["All", "Over", "Under"], default="All",
                          key="chip_side", label_visibility="collapsed")
     with _cc2:
-        _window = st.pills("Form", ["Last 5", "Last 10", "Season"],
-                           default="Last 5", key="chip_window",
-                           label_visibility="collapsed")
+        st.caption("Form: last-10 hit rate · season/last-5 avgs")
 
     # --- Board toggle: best edges vs the spots to avoid.
     _board = st.pills("Board", ["Best edges", "Fades"], default="Best edges",
@@ -1118,29 +1240,29 @@ if nav == "Scan":
                     unsafe_allow_html=True)
             else:
                 _p_sport = p.get("sport", sport)
-                if _p_sport == "nfl":
-                    _mu = _matchup_str(p.get("team"))
-                    _mu_html = (f" · {_mu}" if _mu
-                                else f" · {html.escape(str(p.get('team', '')))}")
-                    _bars, _hit, _cold = _card_form(p, _window)
-                    _photo = _hs.headshot_b64(p["player"], _rosters_df())
-                    _jersey = _hs.jersey_number(p["player"], _rosters_df())
-                    _pos = _hs.position_abbr(p["player"], _rosters_df())
-                else:
-                    # NBA/MLB cards: team-color accents + initials (no
-                    # headshot CDN wired yet — the initials fallback is
-                    # the honest path), no NFL form bars/matchup strings.
+                _photo = _jersey = _pos = None
+                try:
+                    if _p_sport == "nfl":
+                        _mu = _matchup_str(p.get("team"))
+                        _mu_html = (f" · {_mu}" if _mu
+                                    else f" · {html.escape(str(p.get('team', '')))}")
+                        _photo = _hs.headshot_b64(p["player"], _rosters_df())
+                        _jersey = _hs.jersey_number(p["player"],
+                                                    _rosters_df())
+                        _pos = _hs.position_abbr(p["player"], _rosters_df())
+                    else:
+                        _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
+                                    if p.get("team") else "")
+                        _photo = _hs.photo_for_sport(p["player"], _p_sport)
+                except Exception:
                     _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
                                 if p.get("team") else "")
-                    _bars, _hit, _cold = "", "", ""
-                    _photo, _jersey, _pos = None, None, None
+                _form = _card_form(p, _p_sport)
                 st.markdown(
                     ui_cards.trading_card_html(
                         p,
                         matchup_html=_mu_html,
-                        bars=_bars,
-                        hit_html=_hit,
-                        cold_html=_cold,
+                        form=_form,
                         photo_b64=_photo,
                         jersey=_jersey,
                         position=_pos,
@@ -1148,6 +1270,13 @@ if nav == "Scan":
                         negative=_fades_mode,
                     ),
                     unsafe_allow_html=True)
+                # Explore-trends jump: the card's affordance is visual;
+                # this real button drives the Players view.
+                if st.button("📈 Explore player trends",
+                             key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
+                    st.session_state["player_focus"] = p.get("player")
+                    st.session_state["nav"] = "Players"
+                    st.rerun()
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",

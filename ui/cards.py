@@ -45,17 +45,83 @@ MARKET_FRIENDLY = {
 }
 
 
-def market_column(market: str) -> str | None:
-    """nflverse stat column behind a book market key.
+def market_column(market: str, sport: str = "nfl") -> str | None:
+    """Game-log stat column behind a book market key, for any sport.
 
-    Returns None for unknown markets — the card then skips the
-    mini-bars instead of crashing. (Single source of truth lives in
-    projections.model.STAT_MAP; we only read it here.)
+    Returns None for unknown markets — the card then skips the form
+    section instead of crashing. (Single source of truth lives in
+    projections.model.{STAT_MAP,NBA_STAT_MAP,MLB_*}; we only read it.)
+    "PRA" is the computed PTS+REB+AST combo, handled by the caller.
     """
     from projections import model as pmodel
 
+    if sport == "nba":
+        return pmodel.NBA_STAT_MAP.get(market)
+    if sport == "mlb":
+        return (pmodel.MLB_BATTER_STAT_MAP.get(market)
+                or pmodel.MLB_PITCHER_STAT_MAP.get(market))
     entry = pmodel.STAT_MAP.get(market)
     return entry[0] if entry else None
+
+
+def mlb_log_kind(market: str) -> str:
+    """'batter' | 'pitcher' | '' — which MLB game log a market needs."""
+    from projections import model as pmodel
+
+    if market in pmodel.MLB_PITCHER_STAT_MAP:
+        return "pitcher"
+    if market in pmodel.MLB_BATTER_STAT_MAP:
+        return "batter"
+    return ""
+
+
+# Human-readable market labels for the Neon Edge card header
+# ("3-pointers made", not "player_threes"). Covers every market in
+# model.STAT_MAP / NBA_STAT_MAP / MLB_*_STAT_MAP; unknown keys fall back
+# to a tidied version of the raw key (never blank, never a crash).
+MARKET_LABELS = {
+    # NFL
+    "player_pass_yds": "Passing yards",
+    "player_pass_tds": "Passing TDs",
+    "player_rush_yds": "Rushing yards",
+    "player_rush_tds": "Rushing TDs",
+    "player_receptions": "Receptions",
+    "player_rec_yds": "Receiving yards",
+    "player_rec_tds": "Receiving TDs",
+    # NBA
+    "player_points": "Points",
+    "player_rebounds": "Rebounds",
+    "player_assists": "Assists",
+    "player_threes": "3-pointers made",
+    "player_steals": "Steals",
+    "player_blocks": "Blocks",
+    "player_pra": "Pts + Reb + Ast",
+    # MLB
+    "player_hits": "Hits",
+    "player_home_runs": "Home runs",
+    "player_rbis": "RBIs",
+    "player_total_bases": "Total bases",
+    "player_stolen_bases": "Stolen bases",
+    "player_so_batter": "Strikeouts (batter)",
+    "player_so_pitcher": "Strikeouts (pitcher)",
+    "player_outs_recorded": "Outs recorded",
+    "player_hits_allowed": "Hits allowed",
+}
+
+SPORT_META = {
+    "nfl": {"icon": "\U0001F3C8", "tag": "NFL"},
+    "nba": {"icon": "\U0001F3C0", "tag": "NBA"},
+    "mlb": {"icon": "\u26BE", "tag": "MLB"},
+}
+
+
+def market_label(market: str | None) -> str:
+    """'player_threes' -> '3-pointers made'. Unknown -> tidied raw key."""
+    if not market:
+        return "Prop"
+    if market in MARKET_LABELS:
+        return MARKET_LABELS[market]
+    return market.replace("player_", "").replace("_", " ").strip().title() or "Prop"
 
 
 def is_hit(value: float, line: float, side: str) -> str:
@@ -166,14 +232,19 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
                       hit_html: str = "", cold_html: str = "",
                       photo_b64: str | None = None, jersey: str | None = None,
                       position: str | None = None, team: str | None = None,
-                      sport: str = "nfl", negative: bool = False) -> str:
-    """Full trading-card HTML for a prop pick.
+                      sport: str = "nfl", negative: bool = False,
+                      form: dict | None = None) -> str:
+    """Neon Edge pick card (gold-on-charcoal): PLAYER INSIGHT header,
+    prominent photo, market label, big gold line, last-10 hit-rate bar,
+    Season avg / Last-5 avg boxes, model prob + edge, form bars, cold
+    warning, and an Explore-trends affordance.
 
-    Photo (or initials fallback) + jersey-number badge up top, then the
-    existing card anatomy: side + line + odds, hero EDGE% with the MODEL
-    PROB right beside it, best book, cold line, mini form bars, shaded
-    hit rate. negative=True renders the Fades variant: red hero metric,
-    same shape.
+    form: dict from the caller's game-log lookup —
+        {"hits": int, "n": int, "season_avg": float|None,
+         "last5_avg": float|None, "values": [...], "cold": str|None}
+    When form is None the legacy bars/hit_html/cold_html strings are
+    injected as-is (keeps older call sites and tests working); the new
+    layout (header, big line, avgs) always renders.
 
     Team colors: the card border/glow and jersey badge take the team's
     primary (or secondary when the primary is unreadably dark), plus a
@@ -222,27 +293,97 @@ def trading_card_html(p: dict, *, matchup_html: str = "", bars: str = "",
     jersey_html = (f'<span class="jersey-badge"{badge_style}>'
                    f'{_escape(jersey)}</span>'
                    if jersey else "")
-    cold_block = (f'<div class="pc-cold">{_escape(cold_html)}</div>'
-                  if cold_html else "")
-    _edge_line = edge_line_html(p, negative=negative)
-    _edge_why = edge_explainer_html(p, negative=negative)
-    return (
-        f'<div class="pick-card tcard"{card_style}>'
-        '<div class="tcard-top">'
-        f'<div class="tcard-photo">{photo_html}{jersey_html}</div>'
-        '<div class="tcard-id">'
-        f'<div class="tcard-name">{_escape(p.get("player", ""))}{pos_html}</div>'
-        f'<div class="pc-team">{matchup_html}</div>'
-        f'<div class="pc-bet">{_escape(str(p.get("side", "")).title())} '
-        f'{p["line"]:g} <span class="pc-odds">{p["price"]:+}</span></div>'
-        f'<div class="pc-book">Best: <b>{_escape(p.get("book", ""))}</b></div>'
-        "</div>"
-        f'<div class="pc-hero"><div class="{ev_cls}">{ev_txt}</div>'
-        f'<div class="ev-cap">EDGE</div>{prob_html}</div>'
-        "</div>"
-        f"{_edge_line}{_edge_why}{cold_block}{bars}{hit_html}"
+
+    # ---- Neon Edge sections ----
+    meta = SPORT_META.get(sport, SPORT_META["nfl"])
+    head_html = (
+        '<div class="neon-head">'
+        '<span class="neon-kicker">PLAYER INSIGHT</span>'
+        f'<span class="neon-sport">{meta["icon"]} {meta["tag"]}</span>'
         "</div>"
     )
+    market_txt = market_label(p.get("market"))
+    try:
+        price_txt = f"{float(p['price']):+.0f}"
+    except (ValueError, KeyError, TypeError):
+        price_txt = str(p.get("price", ""))
+    line_txt = f"{_escape(str(p.get('side', '')).title())} {p['line']:g}"
+    book_txt = _escape(p.get("book", ""))
+    line_html = (
+        f'<div class="neon-market">{_escape(market_txt)}</div>'
+        f'<div class="neon-line">{line_txt} '
+        f'<span class="pc-odds">{price_txt}</span></div>'
+        f'<div class="neon-book">Best: <b>{book_txt}</b></div>'
+    )
+
+    # Hit-rate bar + avg boxes: built from form when available, else the
+    # legacy pre-rendered strings (or nothing).
+    form_html = ""
+    if form:
+        hits = form.get("hits", 0)
+        n = form.get("n", 0)
+        if n > 0:
+            pct = hits / n
+            shade = hit_shade(pct)
+            window_lbl = f"Last {n}" if n < 10 else "Last 10"
+            form_html += (
+                '<div class="neon-hitbox">'
+                f'<div class="neon-hitrow"><span>{window_lbl} hit rate</span>'
+                f"<b>{hits}/{n}</b></div>"
+                '<div class="neon-track">'
+                f'<div class="neon-fill {shade}" style="width:{pct:.0%}">'
+                "</div></div></div>"
+            )
+        s_avg = form.get("season_avg")
+        l5_avg = form.get("last5_avg")
+        if s_avg is not None or l5_avg is not None:
+            s_txt = f"{s_avg:.1f}" if s_avg is not None else "\u2014"
+            l5_txt = f"{l5_avg:.1f}" if l5_avg is not None else "\u2014"
+            form_html += (
+                '<div class="neon-avgs">'
+                f'<div class="neon-avg"><span>Season avg.</span><b>{s_txt}</b></div>'
+                f'<div class="neon-avg"><span>Last 5 avg.</span><b>{l5_txt}</b></div>'
+                "</div>"
+            )
+        # Mini form bars from the same values (built here so NBA/MLB get
+        # them too — the old path only wired NFL bars from the caller).
+        vals = form.get("values") or []
+        if vals:
+            form_html += mini_bars_html(vals, p["line"], p["side"])
+        cold = form.get("cold")
+        if cold:
+            form_html += (f'<div class="pc-cold">{_escape(cold)}</div>')
+    else:
+        if hit_html:
+            form_html += hit_html
+        if bars:
+            form_html += bars
+        if cold_html:
+            form_html += f'<div class="pc-cold">{_escape(cold_html)}</div>' 
+
+    _edge_line = edge_line_html(p, negative=negative)
+    _edge_why = edge_explainer_html(p, negative=negative)
+    explore_html = (
+        '<div class="neon-explore"><span>\U0001F4C8</span> '
+        "Explore player trends</div>"
+    )
+    return (
+        f'<div class="pick-card neon"{card_style}>'
+        f"{head_html}"
+        '<div class="neon-idrow">'
+        f'<div class="tcard-photo">{photo_html}{jersey_html}</div>'
+        '<div class="neon-id">'
+        f'<div class="neon-name">{_escape(p.get("player", ""))}{pos_html}</div>'
+        f'<div class="pc-team">{matchup_html}</div>'
+        "</div>"
+        f'<div class="neon-edgebox"><div class="{ev_cls}">{ev_txt}</div>'
+        f'<div class="ev-cap">EDGE</div>{prob_html}</div>'
+        "</div>"
+        f"{line_html}{form_html}{_edge_line}{_edge_why}{explore_html}"
+        "</div>"
+    )
+
+
 def _edge_numbers(p: dict):
     """fair P(hit) and the book's implied P(hit), or (None, None).
 

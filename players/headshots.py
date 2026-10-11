@@ -120,21 +120,15 @@ def _evict_lru(cache_dir: str) -> None:
             pass
 
 
-def headshot_path(name: str, rosters_df, fetch=None,
-                  cache_dir: str = HEADSHOT_DIR) -> str | None:
-    """Local cached thumbnail path for a player, or None on any failure.
+def _fetch_thumbnail(url: str, cache_key: str, cache_dir: str,
+                     fetch=None) -> str | None:
+    """Download + thumbnail-cache one image URL. Shared core behind
+    headshot_path and the NBA/MLB sport resolvers below.
 
-    fetch: injectable (url, timeout) -> response with .content and
-    .headers (tests use this; default is requests.get). Never raises —
-    a missing photo is a UI fallback, not an error.
+    Never raises — a missing photo is a UI fallback (initials), not an
+    error. cache_key is sanitized to [A-Za-z0-9_-] (no path traversal).
     """
-    row = _row_for(name, rosters_df)
-    if not row:
-        return None
-    url = (row.get("headshot_url") or "").strip()
-    if not url:
-        return None
-    sid = _safe_id(name, row.get("gsis_id"))
+    sid = re.sub(r"[^A-Za-z0-9_-]+", "_", cache_key or "unknown")[:64] or "unknown"
     os.makedirs(cache_dir, exist_ok=True)
     thumb = _thumb_path(cache_dir, sid)
     if os.path.exists(thumb):
@@ -177,6 +171,104 @@ def headshot_path(name: str, rosters_df, fetch=None,
         except OSError:
             pass
         return None
+
+
+def headshot_path(name: str, rosters_df, fetch=None,
+                  cache_dir: str = HEADSHOT_DIR) -> str | None:
+    """Local cached thumbnail path for a player, or None on any failure.
+
+    fetch: injectable (url, timeout) -> response with .content and
+    .headers (tests use this; default is requests.get). Never raises —
+    a missing photo is a UI fallback, not an error.
+    """
+    row = _row_for(name, rosters_df)
+    if not row:
+        return None
+    url = (row.get("headshot_url") or "").strip()
+    if not url:
+        return None
+    sid = _safe_id(name, row.get("gsis_id"))
+    return _fetch_thumbnail(url, sid, cache_dir, fetch=fetch)
+
+
+# ---- Cross-sport headshots (NBA/MLB) ----
+# The NFL roster feed carries headshot_url; NBA/MLB have no roster feed
+# wired, so these resolve the league's own photo CDN from the player ID
+# we already resolve for game logs. Same thumbnail cache machinery,
+# separate cache dirs (no key collisions across leagues). Verified
+# 2026-10-11: cdn.nba.com/.../2544.png -> 200 image/png (LeBron),
+# securea.mlb.com/.../head_shot/592450.jpg -> 200 image/jpeg (Judge).
+# Unknown player or dead URL -> None -> initials fallback, honestly.
+
+_NBA_HEADSHOT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "cache", "headshots_nba",
+)
+_MLB_HEADSHOT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "cache", "headshots_mlb",
+)
+
+_NBA_CDN = "https://cdn.nba.com/headshots/nba/latest/1040x760/{pid}.png"
+_MLB_CDN = "https://securea.mlb.com/mlb/images/players/head_shot/{pid}.jpg"
+
+
+def _thumb_b64(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        return "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+    except OSError:
+        return None
+
+
+def nba_headshot_b64(name: str, fetch=None) -> str | None:
+    """data: URI for an NBA player's headshot, or None (initials fallback)."""
+    try:
+        from projections import nba_data
+        pid = nba_data.resolve_player_id(name)
+    except Exception:
+        return None
+    if not pid:
+        return None
+    path = _fetch_thumbnail(_NBA_CDN.format(pid=pid), f"nba_{pid}",
+                            _NBA_HEADSHOT_DIR, fetch=fetch)
+    return _thumb_b64(path)
+
+
+def mlb_headshot_b64(name: str, fetch=None) -> str | None:
+    """data: URI for an MLB player's headshot, or None (initials fallback)."""
+    try:
+        from projections import mlb_data
+        pid = mlb_data.resolve_player(name)
+    except Exception:
+        return None
+    if not pid:
+        return None
+    path = _fetch_thumbnail(_MLB_CDN.format(pid=pid), f"mlb_{pid}",
+                            _MLB_HEADSHOT_DIR, fetch=fetch)
+    return _thumb_b64(path)
+
+
+def photo_for_sport(name: str, sport: str, rosters_df=None,
+                    fetch=None) -> str | None:
+    """Best-effort photo data URI for any sport. None -> initials fallback.
+
+    NFL uses the roster feed (headshot_url); NBA/MLB hit the league CDNs.
+    Never raises — the card always renders.
+    """
+    try:
+        if sport == "nba":
+            return nba_headshot_b64(name, fetch=fetch)
+        if sport == "mlb":
+            return mlb_headshot_b64(name, fetch=fetch)
+        if rosters_df is not None:
+            return headshot_b64(name, rosters_df, fetch=fetch)
+    except Exception:
+        pass
+    return None
 
 
 def headshot_b64(name: str, rosters_df, **kwargs) -> str | None:
