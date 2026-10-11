@@ -1,13 +1,15 @@
 # Pinned 2026-10-07 — versions verified working together in
-# ~/workspace/venvs/prop-analyzer. Re-pin deliberately, not blindly.
 # pip-audit (2026-10-07): no known vulnerabilities in this set.
-streamlit==1.65.0
+# pytest==9.1.1
+# Test-only (not needed to run the app):
+# ~/workspace/venvs/prop-analyzer. Re-pin deliberately, not blindly.
+nba_api==1.11.4
 nflreadpy==0.1.5
-polars==2.0.0
 numpy==2.5.3
 pandas==3.0.6
-requests==2.34.2
-python-dotenv==1.2.4
 Pillow==12.3.0  # headshot thumbnails for trading-card picks
-# Test-only (not needed to run the app):
-# pytest==9.1.1
+polars==2.0.0
+pybaseball==2.2.7
+python-dotenv==1.2.4
+requests==2.34.2
+streamlit==1.65.0
