@@ -564,11 +564,6 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
         raw_props = lumify.get_player_props(sport=sport)
         props = lumify.normalize(raw_props, sport=sport)
         _games_covered = raw_props.get("events_covered") or []
-        # TEMP DEBUG 2026-10-11: diagnose missing note on Streamlit Cloud
-        import streamlit as _st
-        _st.sidebar.caption(f"DBG events_covered={len(_games_covered)} "
-                            f"key={'Y' if os.environ.get('LUMIFY_API_KEY') else 'N'} "
-                            f"props={len(props)} rawkeys={list(raw_props.keys())[:5]}")
         if _games_covered and os.environ.get("LUMIFY_API_KEY"):
             _gl = ", ".join(g.get("label", "") for g in _games_covered
                             if g.get("label"))
