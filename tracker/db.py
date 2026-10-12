@@ -40,7 +40,7 @@ def _conn() -> sqlite3.Connection:
                id INTEGER PRIMARY KEY AUTOINCREMENT,
                logged_at REAL,
                game_date TEXT,
-               type TEXT,            -- 'prop' | 'moneyline'
+               type TEXT,            -- 'prop'
                label TEXT,           -- 'Josh Allen over 267.5 pass yds'
                book TEXT,
                line REAL,
@@ -132,7 +132,7 @@ def clv_for(pick_id: int) -> float | None:
     """Closing line value in implied-probability points, signed so that
     positive = the market moved in our favor.
 
-    For an OVER (or moneyline side we took): if the closing price got
+    For an OVER: if the closing price got
     SHORTER (more negative, e.g. -110 -> -130), the market agrees with us
     -> positive CLV.
     """

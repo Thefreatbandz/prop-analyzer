@@ -80,7 +80,6 @@ def _picks():
          "side": "over", "ev_pct": 3.1},
         {"type": "prop", "player": "Stefon Diggs", "market": "player_receptions",
          "side": "under", "ev_pct": 2.5},
-        {"type": "moneyline", "team": "BUF", "ev_pct": 5.0},
     ]
 
 
@@ -106,13 +105,6 @@ def test_filter_picks_tds_groups_three_markets():
     got = cards.filter_picks(picks, "TDs", "All")
     assert len(got) == 3
 
-
-def test_filter_picks_moneyline_only_under_all():
-    picks = _picks()
-    got = cards.filter_picks(picks, "All", "All")
-    assert any(p["type"] == "moneyline" for p in got)
-    got2 = cards.filter_picks(picks, "Rush Yds", "All")
-    assert not any(p["type"] == "moneyline" for p in got2)
 
 
 def test_get_player_props_skips_final_games(monkeypatch):

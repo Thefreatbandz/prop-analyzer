@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from engine import picks as engine
-from odds import lumify, the_odds_api
+from odds import lumify
 from tracker import db
 
 st.set_page_config(page_title="Prop Analyzer", page_icon=None, layout="wide")
@@ -444,7 +444,6 @@ st.markdown(
 
 def key_status() -> dict:
     return {
-        "ODDS_API_KEY": bool(os.environ.get("ODDS_API_KEY")),
         "LUMIFY_API_KEY": bool(os.environ.get("LUMIFY_API_KEY")),
     }
 
@@ -544,14 +543,6 @@ def _live_board(sport: str = "nfl"):
 @st.cache_data(show_spinner="Running EV scan...")
 def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
     sport = (sport or "nfl").lower()
-    # Moneylines degrade gracefully: no key or dead API -> clear notice,
-    # props-only scan. The adapter stays intact for when a key arrives.
-    # (Moneylines are NFL-only for now.)
-    if sport == "nfl":
-        ml_games, ml_note = the_odds_api.get_moneylines_strict()
-    else:
-        ml_games, ml_note = [], None
-    ml_picks = engine.rank_moneylines(ml_games, min_ev=min_ev_pct / 100)
     # Props are the live source right now (Lumify). If the pull fails
     # (dead API, bad key), fall back to sample data and say so — a dead
     # feed is a UI state, never a crash, and never leaks key material.
@@ -611,8 +602,6 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
         _d = dists.get(_p["player"], {}).get(_p["market"], {})
         if _d.get("sample_flag"):
             _p["sample_flag"] = _d["sample_flag"]
-    for _p in ml_picks:
-        _p["sport"] = sport
     degenerate = scan_stats.get("degenerate_sides", 0)
     if degenerate:
         # The model collapsed to fake certainty (0/1 probability) on these
@@ -636,7 +625,7 @@ def run_scan(model_mode: str, min_ev_pct: float, sport: str = "nfl"):
         loud = (f"{low_n} edge(s) are on small samples (<8 games) — "
                 "the model is less sure here. Treat them with extra caution.")
         props_note = f"{props_note} {loud}" if props_note else loud
-    return ml_picks, prop_picks, ml_note, props_note, board_empty_live
+    return prop_picks, props_note, board_empty_live
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading schedule...")
@@ -682,9 +671,7 @@ def run_fades(model_mode: str, max_neg_ev_pct: float, sport: str = "nfl"):
 
 
 def pick_title(p: dict) -> str:
-    if p["type"] == "prop":
-        return f"{p['player']} {p['side']} {p['line']} {p['label']}"
-    return f"{p['team']} moneyline"
+    return f"{p['player']} {p['side']} {p['line']} {p['label']}"
 
 
 # ---------- Scan-tab helpers: form bars, hit rates, matchups ----------
@@ -952,7 +939,7 @@ def _render_player_spotlight(name: str, team: str | None):
 # ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("Prop Analyzer")
-    st.caption("Player props + moneyline EV scanner (v1)")
+    st.caption("Player props EV scanner (v1)")
     # Key presence is computed for the mode label below, but key NAMES
     # only render in dev mode — the public never sees them.
     keys = key_status()
@@ -1013,9 +1000,9 @@ with st.sidebar:
 mode_label = "SAMPLE DATA" if not any(keys.values()) else "LIVE ODDS"
 st.caption(f"Mode: **{mode_label}** · model: {model_mode}")
 
-ml_picks, prop_picks, ml_note, props_note, board_empty_live = run_scan(
+prop_picks, props_note, board_empty_live = run_scan(
     model_mode, min_ev, sport)
-all_picks = prop_picks + ml_picks
+all_picks = prop_picks
 
 def _goto(section, **state):
     """Button on_click callback that jumps to a nav section.
@@ -1321,47 +1308,6 @@ if nav == "Home":
                     unsafe_allow_html=True)
         st.divider()
 
-    # --- Game lines: who the books favor (needs ODDS_API_KEY) ---
-    st.markdown("**Game lines**")
-    if os.environ.get("ODDS_API_KEY"):
-        try:
-            _ml_games, _ = the_odds_api.get_moneylines_strict()
-            _favs = []
-            for _g in _ml_games:
-                _books = _g.get("books", {})
-                if not _books:
-                    continue
-                _best = {}
-                for _side in ("home", "away"):
-                    _prices = [v[_side] for v in _books.values()
-                               if _side in v]
-                    if _prices:
-                        _best[_side] = min(_prices)
-                if len(_best) == 2:
-                    _fav_side = ("home" if _best["home"] < _best["away"]
-                                 else "away")
-                    _favs.append({
-                        "fav": _g[_fav_side], "price": _best[_fav_side],
-                        "dog": _g["away" if _fav_side == "home" else "home"],
-                        "home": _g["home"], "away": _g["away"]})
-            if _favs:
-                import pandas as pd
-                st.dataframe(pd.DataFrame([
-                    {"favorite": f["fav"], "price": f["price"],
-                     "vs": f["dog"]} for f in _favs[:10]
-                ]), use_container_width=True, hide_index=True)
-                st.caption("Favorites by best available moneyline — "
-                           "shortest price is favored. Spreads need a "
-                           "paid props feed; we don't guess them.")
-            else:
-                st.caption("No game lines posted right now.")
-        except Exception:
-            st.caption("Couldn't reach the odds feed right now.")
-    else:
-        st.info("Add ODDS_API_KEY in Secrets for live game lines "
-                "(favorites, moneylines). Props-only mode until then — "
-                "nothing here is guessed.")
-
     # --- Quick links ---
     st.markdown("**Jump in**")
     _qlinks = [("Scan", "🔍", "Ranked +EV props"),
@@ -1379,8 +1325,6 @@ if nav == "Home":
 if nav == "Scan":
     st.markdown(f"<span class='sport-badge'>{sport.upper()}</span>",
                 unsafe_allow_html=True)
-    if ml_note:
-        st.info(ml_note)
     # The empty-board note renders in the empty state below (as info),
     # not here — avoid showing it twice.
     if props_note and not board_empty_live:
@@ -1565,79 +1509,59 @@ if nav == "Scan":
             # photo + jersey badge + name/position/team/matchup → side +
             # line + odds → hero EDGE% → book → cold line → mini last-N
             # form bars → shaded hit rate.
-            _ev_cls = "ev-hero" if p["ev_pct"] >= 0 else "ev-hero neg"
-            if p["type"] == "moneyline":
-                st.markdown(
-                    f"""<div class="pick-card">
-                    <div class="pc-head"><b>{html.escape(str(p['team']))}</b>
-                    <span class="pc-team">moneyline · {html.escape(str(p['game']))}</span></div>
-                    <div class="pc-mid">
-                      <div><div class="pc-bet">{p['price']:+}</div>
-                      <div class="pc-book">Best: <b>{html.escape(str(p['book']))}</b>
-                      <span class="pc-team">(worst {p['worst_price']:+})</span>
-                      </div></div>
-                      <div class="pc-hero"><div class="{_ev_cls}">"""
-                    f"""+{p['ev_pct']:.2f}%</div>"""
-                    f"""<div class="ev-cap">EDGE</div></div>
-                    </div>
-                    {ui_cards.edge_line_html(p, source="sharp")}
-                    {ui_cards.edge_explainer_html(p, source="sharp")}
-                    </div>""",
-                    unsafe_allow_html=True)
-            else:
-                _p_sport = p.get("sport", sport)
-                _photo = _jersey = _pos = None
-                try:
-                    if _p_sport == "nfl":
-                        _mu = _matchup_str(p.get("team"))
-                        _mu_html = (f" · {_mu}" if _mu
-                                    else f" · {html.escape(str(p.get('team', '')))}")
-                        _photo = _hs.headshot_b64(p["player"], _rosters_df())
-                        _jersey = _hs.jersey_number(p["player"],
-                                                    _rosters_df())
-                        _pos = _hs.position_abbr(p["player"], _rosters_df())
-                    else:
-                        _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
-                                    if p.get("team") else "")
-                        _photo = _hs.photo_for_sport(p["player"], _p_sport)
-                except Exception:
+            _p_sport = p.get("sport", sport)
+            _photo = _jersey = _pos = None
+            try:
+                if _p_sport == "nfl":
+                    _mu = _matchup_str(p.get("team"))
+                    _mu_html = (f" · {_mu}" if _mu
+                                else f" · {html.escape(str(p.get('team', '')))}")
+                    _photo = _hs.headshot_b64(p["player"], _rosters_df())
+                    _jersey = _hs.jersey_number(p["player"],
+                                                _rosters_df())
+                    _pos = _hs.position_abbr(p["player"], _rosters_df())
+                else:
                     _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
                                 if p.get("team") else "")
-                _form = _card_form(p, _p_sport)
-                try:
-                    _safe2 = _bpicker2.safe_tier_leg(
-                        p["player"], p["market"], _scan_dists)
-                except Exception:
-                    _safe2 = None
-                try:
-                    _nhits2 = (len(_news_mod2.news_for_player(
-                        _scan_news, p["player"]))
-                        if _news_mod2 is not None and _p_sport == "nfl"
-                        else 0)
-                except Exception:
-                    _nhits2 = 0
-                st.markdown(
-                    ui_cards.trading_card_html(
-                        p,
-                        matchup_html=_mu_html,
-                        form=_form,
-                        photo_b64=_photo,
-                        jersey=_jersey,
-                        position=_pos,
-                        sport=_p_sport,
-                        negative=_fades_mode,
-                        safe_tier=_safe2,
-                        news_count=_nhits2,
-                    ),
-                    unsafe_allow_html=True)
-                # Explore-trends popup: the trends come to you — a modal
-                # over the current tab, no navigation away.
-                if st.button(
-                        "📈 Explore player trends",
-                        key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
-                    _player_trends_dialog(p.get("player"),
-                                          sport=_p_sport,
-                                          market=p.get("market"))
+                    _photo = _hs.photo_for_sport(p["player"], _p_sport)
+            except Exception:
+                _mu_html = (f" · {html.escape(str(p.get('team', '')))}"
+                            if p.get("team") else "")
+            _form = _card_form(p, _p_sport)
+            try:
+                _safe2 = _bpicker2.safe_tier_leg(
+                    p["player"], p["market"], _scan_dists)
+            except Exception:
+                _safe2 = None
+            try:
+                _nhits2 = (len(_news_mod2.news_for_player(
+                    _scan_news, p["player"]))
+                    if _news_mod2 is not None and _p_sport == "nfl"
+                    else 0)
+            except Exception:
+                _nhits2 = 0
+            st.markdown(
+                ui_cards.trading_card_html(
+                    p,
+                    matchup_html=_mu_html,
+                    form=_form,
+                    photo_b64=_photo,
+                    jersey=_jersey,
+                    position=_pos,
+                    sport=_p_sport,
+                    negative=_fades_mode,
+                    safe_tier=_safe2,
+                    news_count=_nhits2,
+                ),
+                unsafe_allow_html=True)
+            # Explore-trends popup: the trends come to you — a modal
+            # over the current tab, no navigation away.
+            if st.button(
+                    "📈 Explore player trends",
+                    key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
+                _player_trends_dialog(p.get("player"),
+                                      sport=_p_sport,
+                                      market=p.get("market"))
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",
@@ -1923,8 +1847,6 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 _live_ids = [g["id"] for g in _lsb if g.get("live")]
                 _lbs = {gid: _live_boxscore(gid) for gid in _live_ids}
                 for _leg in _blegs:
-                    if _leg.get("market") == "moneyline":
-                        continue
                     _g = _le.find_player_game(_lsb, _lbs, _leg["player"])
                     if _g is None:
                         continue
@@ -1937,25 +1859,21 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
                 _live_rows = {}
         for _i, _leg in enumerate(_blegs):
             _c1, _c2 = st.columns([4, 1])
-            if _leg["market"] == "moneyline":
-                _desc = (f"**{_leg['player']}** moneyline — your fair "
-                         f"estimate **{_leg['fair_p']:.0%}**")
-            else:
-                _lbl = _leg.get("label") or bpicker.market_label(
-                    _leg["market"], sport)
-                _tier_txt = (f" [{_leg['tier']}]" if _leg.get("tier") else "")
-                _desc = (f"**{_leg['player']}** {_leg['side']} "
-                         f"{_leg['line']:g} {_lbl}{_tier_txt}"
-                         f" — fair P **{_leg['fair_p']:.1%}**")
-                _lr = _live_rows.get(_leg["player"])
-                if _lr is not None:
-                    _lv, _ld = _lr
-                    import html as _htmllib
-                    _desc += (
-                        f'<div class="live-leg">\U0001f534 '
-                        f'<b>{_lv:g}</b> / {_leg["line"]:g} '
-                        f'{_htmllib.escape(_lbl)} — '
-                        f'{_htmllib.escape(_ld)}</div>')
+            _lbl = _leg.get("label") or bpicker.market_label(
+                _leg["market"], sport)
+            _tier_txt = (f" [{_leg['tier']}]" if _leg.get("tier") else "")
+            _desc = (f"**{_leg['player']}** {_leg['side']} "
+                     f"{_leg['line']:g} {_lbl}{_tier_txt}"
+                     f" — fair P **{_leg['fair_p']:.1%}**")
+            _lr = _live_rows.get(_leg["player"])
+            if _lr is not None:
+                _lv, _ld = _lr
+                import html as _htmllib
+                _desc += (
+                    f'<div class="live-leg">\U0001f534 '
+                    f'<b>{_lv:g}</b> / {_leg["line"]:g} '
+                    f'{_htmllib.escape(_lbl)} — '
+                    f'{_htmllib.escape(_ld)}</div>')
             _c1.markdown(_desc, unsafe_allow_html=True)
             if _c2.button("Remove", key=f"bleg_rm_{_i}"):
                 _blegs.pop(_i)
@@ -2017,35 +1935,18 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Build
     # ---------- Manual add (fallback for players off the board) ----------
     with st.expander("Add a leg manually"):
         with st.form("add_leg", clear_on_submit=True):
-            _bml = st.checkbox("Moneyline leg (instead of a player prop)")
-            if _bml:
-                _bp = st.text_input("Team", placeholder="e.g. Chiefs")
-                _bfair = st.number_input("Your fair win % for this team",
-                                         min_value=1.0, max_value=99.0,
-                                         value=55.0, step=1.0)
-                _bm, _bs, _bl = "moneyline", "win", 0.0
-            else:
-                _bp = st.text_input("Player", placeholder="e.g. Josh Allen")
-                _bm = st.selectbox(
-                    "Stat", bpicker.markets_for_sport(sport),
-                    format_func=lambda m: bpicker.market_label(m, sport))
-                _bs = st.pills("Side", ["Over", "Under"], default="Over",
-                               key="bleg_side", label_visibility="collapsed")
-                _bl = st.number_input("Line", value=250.0, step=0.5)
-                _bfair = None
+            _bp = st.text_input("Player", placeholder="e.g. Josh Allen")
+            _bm = st.selectbox(
+                "Stat", bpicker.markets_for_sport(sport),
+                format_func=lambda m: bpicker.market_label(m, sport))
+            _bs = st.pills("Side", ["Over", "Under"], default="Over",
+                           key="bleg_side", label_visibility="collapsed")
+            _bl = st.number_input("Line", value=250.0, step=0.5)
             _add = st.form_submit_button("Add leg", type="primary")
 
         if _add:
             if not _bp.strip():
-                st.warning("Name the player (or team) first.")
-            elif _bml:
-                _blegs.append({
-                    "player": _bp.strip(), "market": "moneyline",
-                    "label": "Moneyline", "side": "win", "line": None,
-                    "fair_p": round(_bfair / 100, 4),
-                    "note": "your estimate — we don't model team win prob yet",
-                })
-                st.rerun()
+                st.warning("Name the player first.")
             else:
                 priced = blegs.price_leg(_bp.strip(), _bm, _bs.lower(),
                                          float(_bl), _dists)
@@ -2078,18 +1979,14 @@ if nav == "Builder" and st.session_state.get("builder_sub", "Builder") == "Pick 
         st.code(p["math"])
         if p.get("injury_flag"):
             st.warning(p["injury_flag"])
-        if p["type"] == "moneyline":
-            st.caption(f"Line shopping: best {p['price']:+} vs worst {p['worst_price']:+} "
-                       f"— {p['shop_uplift_pct']:+.2f}% payout uplift just for picking the book.")
-        else:
-            _p_sport = p.get("sport", "nfl")
-            _window_txt = {
-                "nfl": "2015–present",
-                "nba": "2023-24 – 2025-26",
-                "mlb": "2026 season",
-            }.get(_p_sport, "recent seasons")
-            st.caption(f"Projection based on {p.get('n_games', '?')} games "
-                       f"(recency-weighted, {_window_txt}).")
+        _p_sport = p.get("sport", "nfl")
+        _window_txt = {
+            "nfl": "2015–present",
+            "nba": "2023-24 – 2025-26",
+            "mlb": "2026 season",
+        }.get(_p_sport, "recent seasons")
+        st.caption(f"Projection based on {p.get('n_games', '?')} games "
+                   f"(recency-weighted, {_window_txt}).")
 
 if nav == "Track" and st.session_state.get("track_sub", "Track Record") == "Tracker":
     s = db.weekly_summary(days=7)

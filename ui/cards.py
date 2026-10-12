@@ -441,8 +441,8 @@ def edge_line_html(p: dict, *, source: str = "model",
     """One-line beginner edge readout for a card.
 
     Written for people new to props: "68 in 100" instead of "implied
-    probability". source="sharp" is for moneyline cards, where the fair
-    number comes from the Pinnacle no-vig market, not our sim.
+    probability". source="sharp" frames the fair number as coming from
+    the sharp market instead of our sim.
     """
     fair_p, implied = _edge_numbers(p)
     if fair_p is None:
@@ -729,20 +729,9 @@ def game_row_html(g: dict) -> str:
 
 
 def filter_picks(picks: list[dict], category: str, side: str) -> list[dict]:
-    """Apply the stat-category chips + Over/Under pills to the pick list.
-
-    Moneyline picks have no stat market, so they only appear under the
-    "All" chip — filtering to "Pass Yds" shouldn't hide the concept of
-    moneylines, it just narrows the prop list (moneylines get their own
-    treatment while the Odds API key is missing anyway).
-    """
+    """Apply the stat-category chips + Over/Under pills to the pick list."""
     out = []
     for p in picks:
-        if p.get("type") == "moneyline":
-            # No stat market and no over/under — only the unfiltered view.
-            if category == "All" and side == "All":
-                out.append(p)
-            continue
         if category != "All":
             allowed = CATEGORY_MARKETS.get(category, [])
             if p.get("market") not in allowed:

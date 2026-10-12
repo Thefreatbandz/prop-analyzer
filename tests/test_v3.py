@@ -164,7 +164,8 @@ def test_dashboard_boots_with_new_views(monkeypatch):
         for want in ("Home", "Scan", "Teams", "Players", "Intel", "Track",
                      "Builder", "Lab"):
             assert want in nav_opts, f"missing nav: {want} in {nav_opts}"
-    # The degraded-moneyline notice must render, not crash.
+    # Moneylines are out (2026-10-12, his call): no moneyline notice
+    # or prompt may render anywhere in the Scan tab.
     infos = [str(getattr(i, "value", "")) for i in at.info]
-    assert any("props only" in v.lower() for v in infos), \
-        "expected the moneyline-degraded notice in the Scan tab"
+    assert not any("moneyline" in v.lower() for v in infos), \
+        f"moneyline copy still renders in the Scan tab: {infos}"

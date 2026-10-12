@@ -1,6 +1,6 @@
 # Prop Analyzer v1 (working title)
 
-NFL player-props + moneyline **EV analyzer**. It pulls lines from multiple
+NFL/NBA/MLB player-props **EV analyzer**. It pulls lines from multiple
 sportsbooks, builds its own fair price for each bet from stats (free nflverse
 data, 2015–present), and flags the ones mispriced in your favor. Every flag
 is paper-tracked and graded two ways: vs the closing line (CLV) and vs the
@@ -44,10 +44,8 @@ this just does the math.
   Every suggestion carries its reason ("Top +EV prop this week…",
   "In the news: N headlines"). Nothing here is anyone's opinion, and
   there are no personal favorite lists.
-- **Props-only mode:** with The Odds API unreachable, moneyline views
-  show a clear "Moneyline data unavailable — showing player props only"
-  notice instead of erroring. The adapter is intact for when a key
-  arrives. Live props pulls that fail also degrade to labeled sample
+- **Props-only, by design:** moneylines were removed 2026-10-12 (his
+  call). Live props pulls that fail degrade to labeled sample
   data rather than crashing.
 - **Security (2026-10-07 pass):**
   - No third-party tracking: `.streamlit/config.toml` sets
@@ -73,14 +71,14 @@ Without API keys everything runs on bundled sample data and says so.
 1. Copy `.env.example` to `.env` and `chmod 600 .env` (owner-read-only —
    keys must never be world-readable; the repo's `.gitignore` already
    excludes `.env` from version control).
-2. **The Odds API** (NFL moneylines, free tier): https://the-odds-api.com
-   → set `ODDS_API_KEY`.
-3. **Lumify** (NFL player props, 1,000 free credits): https://lumify.ai
+1. **Lumify** (player props, 1,000 free credits): https://lumify.ai
    → set `LUMIFY_API_KEY`.
 
-Both adapters cache aggressively (moneylines 15 min, props 6 h) — credits
-are never burned twice. With keys set, `scan.py` and the dashboard
-automatically switch from sample mode to live odds.
+The props adapter caches aggressively (12 h) — credits are never burned
+twice. With the key set, `scan.py` and the dashboard automatically switch
+from sample mode to live odds. (The Odds API / moneylines adapter is
+retained in `odds/the_odds_api.py` but unused since moneylines were
+removed 2026-10-12.)
 
 ## Live projections (the accurate path)
 
@@ -119,8 +117,6 @@ hundred MB; after that it's a 24 h cache.
 - `EV% = fair_prob × decimal_odds − 1`. Positive = mispriced in our favor.
 - Fair prob comes from a 10,000-run Monte Carlo over the player's
   recency-weighted stat distribution.
-- Moneylines get a second opinion: best price vs Pinnacle's no-vig price
-  (the sharp book). Beating Pinnacle = the sharpest book says it's value.
 
 The full teacher-style walkthrough lives in `engine/odds_math.py`.
 
@@ -132,7 +128,7 @@ app.py                  Streamlit dashboard (Scan / Pick detail / Tracker /
 scan.py                 CLI: run the full EV scan, optionally log paper picks
 config.py               PREMIUM_ENABLED flag (Compare tool gate)
 odds/
-  the_odds_api.py       NFL moneylines adapter (The Odds API, cached 15 min)
+  the_odds_api.py       retired moneylines adapter (unused since 2026-10-12)
   lumify.py             NFL player props adapter (Lumify, cached 6 h)
   cache.py              SQLite response cache — never re-fetch within TTL
   samples/              sample boards so everything runs with zero keys
@@ -172,7 +168,7 @@ ui/
                         hit-rate shading, filters, premium lock card
 engine/
   odds_math.py          American/implied/decimal conversions, no-vig, EV%
-  picks.py              rank props + moneylines by EV%
+  picks.py              rank props by EV%
 tracker/
   db.py                 SQLite paper log, CLV, grading, weekly summary
 tests/                  32 tests: known-answer math + sample-data pipeline +

@@ -7,7 +7,7 @@ Usage:
     python scan.py --min-ev 3      # only flag edges >= 3%
     python scan.py --sport nba     # NBA props (nfl/nba/mlb, default nfl)
 
-Needs ODDS_API_KEY / LUMIFY_API_KEY in .env for live odds; without keys it
+Needs LUMIFY_API_KEY in .env for live odds; without it the scan
 runs on the bundled sample boards and tells you so.
 """
 from __future__ import annotations
@@ -24,14 +24,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from engine import picks as engine
-from odds import lumify, the_odds_api
+from odds import lumify
 
 SPORTS = ("nfl", "nba", "mlb")
 
 
 def key_status() -> dict:
     return {
-        "ODDS_API_KEY": bool(os.environ.get("ODDS_API_KEY")),
         "LUMIFY_API_KEY": bool(os.environ.get("LUMIFY_API_KEY")),
     }
 
@@ -76,12 +75,6 @@ def main() -> None:
     print("Keys:", {k: ("set" if v else "MISSING — sample mode") for k, v in keys.items()})
     print(f"Sport: {sport.upper()}")
 
-    # --- Moneylines (graceful: props-only is fine; NFL-only for now) ---
-    ml_games, ml_note = the_odds_api.get_moneylines_strict() if sport == "nfl" else ([], None)
-    if ml_note:
-        print(f"({ml_note})")
-    ml_picks = engine.rank_moneylines(ml_games, min_ev=args.min_ev / 100)
-
     # --- Player props (the live source right now) ---
     props_note = None
     try:
@@ -97,11 +90,6 @@ def main() -> None:
         print(f"(No upcoming {sport.upper()} games have posted player props yet.)")
     dists = load_distributions(args.model, sport)
     prop_picks = engine.rank_props(props, dists, min_ev=args.min_ev / 100)
-
-    print(f"\n== MONEYLINE EDGES ({len(ml_picks)}) ==")
-    for p in ml_picks:
-        print(f"  {p['ev_pct']:+.2f}%  {p['team']} {p['price']:+} @ {p['book']}"
-              f"  (fair {p['fair_american']:+.0f})  [{p['game']}]")
 
     print(f"\n== PROP EDGES ({len(prop_picks)}) ==")
     # News cross-check: if the LATEST injury report flags a player the

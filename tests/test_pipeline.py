@@ -1,7 +1,7 @@
 """End-to-end pipeline test on SAMPLE data — zero keys, zero downloads.
 
 Exercises: sample odds load -> normalize -> sample distributions ->
-Monte Carlo -> rank_props / rank_moneylines -> tracker log/grade/CLV.
+Monte Carlo -> rank_props -> tracker log/grade/CLV.
 """
 import json
 import os
@@ -9,7 +9,7 @@ import tempfile
 
 import engine.picks as picks_mod
 from engine.odds_math import american_to_decimal
-from odds import lumify, the_odds_api
+from odds import lumify
 from projections.montecarlo import prob_over
 
 
@@ -20,22 +20,6 @@ def _sample_dists():
     )
     with open(path) as f:
         return json.load(f)["projections"]
-
-
-def test_moneyline_pipeline_sample():
-    board = the_odds_api.get_moneylines()  # no key -> sample
-    games = the_odds_api.normalize(board)
-    assert len(games) == 2
-    assert games[0]["home"] == "Kansas City Chiefs"
-    assert "pinnacle" in games[0]["books"]
-    ranked = picks_mod.rank_moneylines(games, min_ev=0.0)
-    # Every pick must carry the math explanation and a sane EV
-    for p in ranked:
-        assert p["type"] == "moneyline"
-        assert "math" in p and "EV" in p["math"]
-        assert isinstance(p["ev_pct"], float)
-    # Sanity: best book is never worse than the worst book
-    assert all(p["shop_uplift_pct"] >= 0 for p in ranked)
 
 
 def test_props_pipeline_sample():

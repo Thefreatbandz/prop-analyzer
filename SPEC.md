@@ -1,6 +1,6 @@
 # Prop Analyzer v1 — Spec (working title)
 
-**Scope (locked 2026-10-07):** NFL football. Player props + moneyline. Other sports plug in later — the architecture is sport-agnostic from day one.
+**Scope (locked 2026-10-07, moneylines removed 2026-10-12 per Tbandz):** NFL/NBA/MLB. Player props only. Other sports plug in later — the architecture is sport-agnostic from day one.
 
 ## What it is / what it isn't
 
@@ -27,9 +27,9 @@ odds API ──→ line board ──→ EV engine ──→ ranked picks ──�
 (nflverse) ──→ projections ──↗                (Streamlit dashboard)
 ```
 
-**1. Line board** — pulls NFL moneylines + player props from every available book. Caches aggressively (API credits cost money).
+**1. Line board** — pulls player props from every available book. Caches aggressively (API credits cost money).
 **2. Projections** — free nflverse data (play-by-play back to 1999, rosters, snap counts, injuries) via `nflreadpy`. Per-player mean + std for each stat → Monte Carlo simulation (10k runs) → fair probability for every prop line.
-**3. EV engine** — fair prob vs best book price → EV%. Rank everything. Moneyline gets the same treatment, checked against the sharp books (Pinnacle) as a second opinion.
+**3. EV engine** — fair prob vs best book price → EV%. Rank everything.
 **4. Paper tracker** — every flagged pick logged with timestamp, book, line, fair prob, EV. Graded two ways: vs closing line (CLV) and vs actual result. This is the Stackz rule: **no real money until the paper record proves an edge.**
 **5. Dashboard** — Streamlit (same stack as Bandz Terminal): scan view, pick detail with the math shown, tracker with win rate / ROI / CLV.
 
@@ -43,17 +43,17 @@ odds API ──→ line board ──→ EV engine ──→ ranked picks ──�
 
 | Need | Source | Cost |
 |---|---|---|
-| Moneyline odds (multi-book) | The Odds API free tier | $0 (limited credits) |
+| Player prop odds (multi-book) | Lumify free tier | $0 (1,000 free credits) |
 | Player props odds (multi-book) | The Odds API paid tier, or Lumify (1,000 free credits, then paid) | Props data is the expensive part industry-wide (~$200–500/mo for premium). Bootstrap on free credits first. |
 | Stats for projections | nflverse (play-by-play, rosters, injuries, 1999–present) | $0, no key needed |
 | Scores/grading | nflverse + odds API | $0 |
 
-**Recommended bootstrap ($0):** Lumify's 1,000 free credits for props + The Odds API free tier for moneylines + nflverse for everything else. Pay for a props feed only if the paper record says the edge is real.
+**Recommended bootstrap ($0):** Lumify's 1,000 free credits for props + nflverse for everything else. Pay for a props feed only if the paper record says the edge is real. (Moneylines were removed from the app 2026-10-12 per Tbandz; the Odds API adapter is retired.)
 
 ## The math (simple version)
 
 - Implied probability from American odds: -110 → 52.4%, +100 → 50%.
-- Remove the vig: normalize the over/under (or both sides of the moneyline) so they sum to 100% → the book's *true* price.
+- Remove the vig: normalize the over/under so they sum to 100% → the book's *true* price.
 - EV% = (fair_prob × decimal_odds) − 1. Positive = +EV.
 - Bet sizing for the tracker: flat paper units in v1 (no Kelly until the edge is proven — Kelly on an unproven edge is how bankrolls die).
 
@@ -94,7 +94,7 @@ odds API ──→ line board ──→ EV engine ──→ ranked picks ──�
 
 - **Player search bar** (sidebar): substring search over all 32-team rosters, ranked, click-to-profile.
 - **Suggested players**: 100% DATA-DRIVEN ONLY — top current-week prop EV% + trending (news mentions). No personal/opinion favorites anywhere (removed entirely per Tbandz). Logic labeled in the UI.
-- **Props-only mode**: moneyline views degrade to a clear notice when The Odds API is unreachable; adapter kept intact.
+- **Props-only, by design** (moneylines removed 2026-10-12 per Tbandz).
 - **Security pass**: no third-party tracking (Streamlit telemetry off via .streamlit/config.toml), secrets hygiene (keys only in chmod-600 gitignored .env, sanitized adapter exceptions, presence-only key status in UI), input sanitization (no SQL/shell interpolation), pinned deps + pip-audit clean.
 - **UI polish**: full dark gold-on-charcoal theme, clean typography, phone-readable.
 - **Social "favorited by people": NOT built** — needs user accounts + backend. Documented future item only; nothing faked.
@@ -102,7 +102,7 @@ odds API ──→ line board ──→ EV engine ──→ ranked picks ──�
 ## v4 scope (locked 2026-10-07, UI redesign + game-changers)
 
 - **UI redesign** (from live survey of props.cash, Action Network, BettingPros): hero EDGE% per pick card, card anatomy (player/matchup → line/odds → EV → book), mini last-5 bar viz per card, category chips, hit-rate shading, plain-English "What is +EV?" explainer, Scan tab as front page. Gold-on-charcoal kept.
-- **Prop builder (FREE)**: SGP-style leg stacking (prop + moneyline legs), per-leg model pricing, combined fair probability with an honest same-game correlation caution on every combined number. Saving/naming builds is premium.
+- **Prop builder (FREE)**: SGP-style leg stacking (prop legs), per-leg model pricing, combined fair probability with an honest same-game correlation caution on every combined number. Saving/naming builds is premium.
 - **Public track record (FREE)**: every paper pick published with line-at-pick, closing line, result, CLV; lifetime win rate / ROI / avg CLV; 100-pick gate progress shown honestly. Copy: "We publish every pick. Grade us."
 - **Line-movement alerts (FREE)**: watchlist + snapshot/diff detection (≥1.5 pts / ≥10¢). Push scheduling is a future step.
 - **Premium tier** (gated by `PREMIUM_ENABLED`): compare tool, saved builds, backtest lab (walk-forward calibration + Brier score; honest note that it validates the model, not betting P&L — no free historical lines). Pricing direction: $12/mo or $99/yr; $0 charged until 100 graded picks prove the record. No payments/accounts built until Tbandz approves.
@@ -112,7 +112,7 @@ odds API ──→ line board ──→ EV engine ──→ ranked picks ──�
 - **Trading-card pick cards**: player headshot (nflverse roster CDN, downloaded once, thumbnailed, cached locally with LRU cap; initials-monogram fallback), jersey-number badge, team-colored accents (32-team color map), photo/name/number like a real card.
 - **MODEL PROB on every card (FREE)**: fair P(hit) from the Monte Carlo sim shown next to EDGE% — the math stays free forever; premium is power tools, not hidden numbers. Builder per-leg probabilities match Scan exactly (stable seeding).
 - **"What's not working"**: per-card cold lines ("missed 4 of last 5 vs this line") + a **Fades** view ranking most-negative-EV spots to avoid (explicitly not picks; no log button).
-- **Security sweep**: headshot cache hardened (filename allowlist, 8s timeout, 8MB cap, image content-type check, LRU eviction), HTML escaping on all interpolated names (cards, suggested strip, moneyline card), secrets audit clean, 112/112 tests green.
+- **Security sweep**: headshot cache hardened (filename allowlist, 8s timeout, 8MB cap, image content-type check, LRU eviction), HTML escaping on all interpolated names (cards, suggested strip), secrets audit clean, 112/112 tests green.
 
 ## Responsible gambling (one line, not a lecture)
 
