@@ -56,6 +56,12 @@ def get(source: str, key: str, ttl_seconds: int, fetcher, force: bool = False):
             " VALUES (?, ?, ?, ?)",
             (source, key, now, json.dumps(payload)),
         )
+        # Bound growth: a full NFL season is ~270 events; prune anything
+        # older than 30 days so the cache never grows without limit.
+        conn.execute(
+            "DELETE FROM odds_cache WHERE fetched_at < ?",
+            (now - 30 * 24 * 3600,),
+        )
     return payload
 
 

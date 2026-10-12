@@ -158,7 +158,8 @@ def _event_label(event: dict) -> str:
             return f"{a} @ {b}".strip(" @")
     except Exception:
         pass
-    return event.get("name") or event.get("id", "")
+    # Always a string: a bare int id would break ", ".join() callers.
+    return str(event.get("name") or event.get("id", ""))
 
 
 # Live Lumify market keys -> the canonical player_* keys our projection

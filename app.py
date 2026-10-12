@@ -1052,10 +1052,11 @@ def _trends_nfl(player_name):
         return
     season, week = _cur_week()
     team_abbr = bio.get("team")
+    _nm = html.escape(str(bio['name']))
     st.markdown(
-        f"### {bio['name']} "
-        f"<span style='color:#C9A227'>#{bio['jersey'] or ''} "
-        f"{bio['position'] or ''} · {team_abbr or ''}</span>",
+        f"### {_nm} "
+        f"<span style='color:#C9A227'>#{html.escape(str(bio['jersey'] or ''))} "
+        f"{html.escape(str(bio['position'] or ''))} · {html.escape(str(team_abbr or ''))}</span>",
         unsafe_allow_html=True)
     if bio.get("status") and bio["status"] != "Active":
         st.warning(f"Roster status: {bio['status']}")
@@ -1096,7 +1097,7 @@ def _trends_nfl(player_name):
 def _trends_nba(player_name, market=None):
     """NBA trends: last-10 game log with recent form."""
     from projections import nba_data
-    st.markdown(f"### {player_name} <span style='color:#C9A227'>NBA</span>",
+    st.markdown(f"### {html.escape(str(player_name))} <span style='color:#C9A227'>NBA</span>",
                 unsafe_allow_html=True)
     try:
         log = nba_data.full_game_log(player_name)
@@ -1124,7 +1125,7 @@ def _trends_nba(player_name, market=None):
 def _trends_mlb(player_name, market=None):
     """MLB trends: last-10 batter/pitcher game log."""
     from projections import mlb_data
-    st.markdown(f"### {player_name} <span style='color:#C9A227'>MLB</span>",
+    st.markdown(f"### {html.escape(str(player_name))} <span style='color:#C9A227'>MLB</span>",
                 unsafe_allow_html=True)
     try:
         kind = None
