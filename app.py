@@ -1022,76 +1022,138 @@ def _goto(section, **state):
 
 
 @st.dialog("Player trends", width="large")
-def _player_trends_dialog(player_name):
+def _player_trends_dialog(player_name, sport="nfl", market=None):
     """Popup trends for a player — the content comes to you.
 
-    Tapped from "Explore player trends" on Scan cards. Renders the same
-    trends the Players tab shows (bio, form, game log, headlines) in a
-    modal so you never leave where you are.
+    Tapped from "Explore player trends" on Scan cards. Shows last-10
+    game log, recent form, and headlines in a modal so you never leave
+    where you are. Works for NFL, NBA, and MLB.
     """
-    from players import profiles
+    sport = (sport or "nfl").lower()
     try:
-        bio = profiles.find_player(_rosters_df(), player_name)
-        if not bio:
-            st.caption(f"No profile found for {player_name}.")
-            return
-        season, week = _cur_week()
-        team_abbr = bio.get("team")
-        st.markdown(
-            f"### {bio['name']} "
-            f"<span style='color:#C9A227'>#{bio['jersey'] or ''} "
-            f"{bio['position'] or ''} · {team_abbr or ''}</span>",
-            unsafe_allow_html=True)
-        if bio.get("status") and bio["status"] != "Active":
-            st.warning(f"Roster status: {bio['status']}")
+        if sport == "nfl":
+            _trends_nfl(player_name)
+        elif sport == "nba":
+            _trends_nba(player_name, market)
+        elif sport == "mlb":
+            _trends_mlb(player_name, market)
+        else:
+            st.caption(f"Trends not available for {sport.upper()}.")
+    except Exception:
+        st.caption("Couldn't load trends for this player right now.")
+
+
+def _trends_nfl(player_name):
+    """NFL trends: bio, injury, last-10 game log, recent form, headlines."""
+    from players import profiles
+    bio = profiles.find_player(_rosters_df(), player_name)
+    if not bio:
+        st.caption(f"No profile found for {player_name}.")
+        return
+    season, week = _cur_week()
+    team_abbr = bio.get("team")
+    st.markdown(
+        f"### {bio['name']} "
+        f"<span style='color:#C9A227'>#{bio['jersey'] or ''} "
+        f"{bio['position'] or ''} · {team_abbr or ''}</span>",
+        unsafe_allow_html=True)
+    if bio.get("status") and bio["status"] != "Active":
+        st.warning(f"Roster status: {bio['status']}")
+    try:
         inj = profiles.latest_injury_status(_injuries_df(), player_name,
                                             team_abbr, season, week)
         if inj and inj.get("status"):
             st.warning(f"Injury report (wk {inj['week']}): **{inj['status']}**"
                        f" — {inj.get('details') or ''}")
-
-        st.markdown("**Recent form**")
-        try:
-            form = profiles.player_form_summary(
-                _player_stats_df(), player_name,
-                (bio or {}).get("position"), season)
-            if form and form.get("games"):
-                _l5 = form["last5"]
-                _l5avg = (sum(_l5) / len(_l5)) if _l5 else 0
-                _f1, _f2 = st.columns(2)
-                _f1.metric("Season avg", form["season_avg"])
-                _f2.metric("Last 5 avg", round(_l5avg, 1),
-                           delta=f"{_l5avg - form['season_avg']:+.1f} vs season")
-                st.caption(f"{form['games']} games · last 5: "
-                           f"{', '.join(str(v) for v in _l5)}")
-        except Exception:
-            pass
-
-        st.markdown("**Game log — last 5**")
-        try:
-            log = profiles.game_log(_player_stats_df(), player_name, last_n=5)
-            if log:
-                import pandas as pd
-                st.dataframe(pd.DataFrame(log), use_container_width=True,
-                             hide_index=True)
-            else:
-                st.caption("No game log available.")
-        except Exception:
-            st.caption("No game log available.")
-
-        st.markdown("**Related headlines**")
-        try:
-            from news import espn as news_mod
-            hits = news_mod.news_for_player(_espn_news(), player_name)[:3]
-            if hits:
-                for h in hits:
-                    st.markdown(f"- {h.get('title', '')}")
-            else:
-                st.caption("No recent headlines.")
-        except Exception:
-            st.caption("Headlines unavailable.")
     except Exception:
-        st.caption("Couldn't load trends for this player right now.")
+        pass
+
+    st.markdown("**Recent form — last 10**")
+    try:
+        log10 = profiles.game_log(_player_stats_df(), player_name, last_n=10)
+        if log10:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(log10), use_container_width=True,
+                         hide_index=True)
+        else:
+            st.caption("No game log available.")
+    except Exception:
+        st.caption("No game log available.")
+
+    st.markdown("**Related headlines**")
+    try:
+        from news import espn as news_mod
+        hits = news_mod.news_for_player(_espn_news(), player_name)[:3]
+        if hits:
+            for h in hits:
+                st.markdown(f"- {h.get('title', '')}")
+        else:
+            st.caption("No recent headlines.")
+    except Exception:
+        st.caption("Headlines unavailable.")
+
+
+def _trends_nba(player_name, market=None):
+    """NBA trends: last-10 game log with recent form."""
+    from projections import nba_data
+    st.markdown(f"### {player_name} <span style='color:#C9A227'>NBA</span>",
+                unsafe_allow_html=True)
+    try:
+        log = nba_data.full_game_log(player_name)
+        if log.height == 0:
+            st.caption("No NBA game log available for this player.")
+            return
+        rows = log.to_dicts()[:10]  # newest first
+        # Recent form: points last 10
+        pts = [r.get("PTS") for r in rows if r.get("PTS") is not None]
+        if pts:
+            _a1, _a2 = st.columns(2)
+            _a1.metric("Last 10 PPG", round(sum(pts) / len(pts), 1))
+            _a2.metric("Games", len(pts))
+        import pandas as pd
+        _cols = ["game_date", "matchup", "MIN", "PTS", "REB", "AST",
+                 "FG3M", "STL", "BLK"]
+        _show = [{c: r.get(c) for c in _cols if c in r} for r in rows]
+        st.markdown("**Game log — last 10**")
+        st.dataframe(pd.DataFrame(_show), use_container_width=True,
+                     hide_index=True)
+    except Exception:
+        st.caption("No NBA game log available for this player.")
+
+
+def _trends_mlb(player_name, market=None):
+    """MLB trends: last-10 batter/pitcher game log."""
+    from projections import mlb_data
+    st.markdown(f"### {player_name} <span style='color:#C9A227'>MLB</span>",
+                unsafe_allow_html=True)
+    try:
+        kind = None
+        if market:
+            try:
+                import ui.cards as ui_cards
+                kind = ui_cards.mlb_log_kind(market)
+            except Exception:
+                pass
+        # Try batter first, fall back to pitcher.
+        log, _kind = None, kind or "batter"
+        if _kind == "batter":
+            log = mlb_data.batter_game_log(player_name)
+            if log.height == 0:
+                log = mlb_data.pitcher_game_log(player_name)
+                _kind = "pitcher" if log.height else "batter"
+        else:
+            log = mlb_data.pitcher_game_log(player_name)
+        if log is None or log.height == 0:
+            st.caption("No MLB game log available for this player.")
+            return
+        rows = log.to_dicts()[:10]  # newest first
+        st.caption(f"{_kind.title()} log")
+        import pandas as pd
+        st.markdown("**Game log — last 10**")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True)
+    except Exception:
+        st.caption("No MLB game log available for this player.")
 
 
 # ---------- Global player search (sidebar) ----------
@@ -1560,7 +1622,9 @@ if nav == "Scan":
                 if st.button(
                         "📈 Explore player trends",
                         key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
-                    _player_trends_dialog(p.get("player"))
+                    _player_trends_dialog(p.get("player"),
+                                          sport=_p_sport,
+                                          market=p.get("market"))
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",
