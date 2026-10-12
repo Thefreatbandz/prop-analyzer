@@ -30,14 +30,26 @@ def _conn() -> sqlite3.Connection:
                payload TEXT,
                PRIMARY KEY (source, cache_key))"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS usage_log (
+               ts REAL,
+               source TEXT,
+               cache_key TEXT,
+               credits INTEGER)"""
+    )
     return conn
 
 
-def get(source: str, key: str, ttl_seconds: int, fetcher, force: bool = False):
+def get(source: str, key: str, ttl_seconds: int, fetcher, force: bool = False,
+        cost_fn=None):
     """Return cached payload, or call fetcher() and cache the result.
 
     `fetcher` must return something JSON-serializable. Raises whatever
     fetcher raises on network failure — callers decide how to degrade.
+
+    `cost_fn`: optional payload -> int credits spent. Called only when the
+    fetcher actually runs (cache miss). Defaults to 1 credit per call.
+    Every real network call is logged to usage_log for budget tracking.
     """
     now = time.time()
     if not force:
@@ -50,6 +62,7 @@ def get(source: str, key: str, ttl_seconds: int, fetcher, force: bool = False):
             return json.loads(row[1])
 
     payload = fetcher()
+    credits = cost_fn(payload) if cost_fn else 1
     with _conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO odds_cache (source, cache_key, fetched_at, payload)"
@@ -62,7 +75,36 @@ def get(source: str, key: str, ttl_seconds: int, fetcher, force: bool = False):
             "DELETE FROM odds_cache WHERE fetched_at < ?",
             (now - 30 * 24 * 3600,),
         )
+        conn.execute(
+            "INSERT INTO usage_log (ts, source, cache_key, credits)"
+            " VALUES (?, ?, ?, ?)",
+            (now, source, key, credits),
+        )
     return payload
+
+
+def usage_total(days: int = 7, source: str | None = None) -> int:
+    """Total credits spent in the last `days` days (all sources unless given)."""
+    cutoff = time.time() - days * 24 * 3600
+    q = "SELECT COALESCE(SUM(credits), 0) FROM usage_log WHERE ts >= ?"
+    args: list = [cutoff]
+    if source:
+        q += " AND source = ?"
+        args.append(source)
+    with _conn() as conn:
+        return int(conn.execute(q, args).fetchone()[0])
+
+
+def usage_by_day(days: int = 30) -> list:
+    """Per-day credit totals, newest last: [(date_str, credits), ...]."""
+    cutoff = time.time() - days * 24 * 3600
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT date(ts, 'unixepoch'), SUM(credits) FROM usage_log"
+            " WHERE ts >= ? GROUP BY 1 ORDER BY 1",
+            (cutoff,),
+        ).fetchall()
+    return [(r[0], int(r[1])) for r in rows]
 
 
 def age_seconds(source: str, key: str) -> float | None:

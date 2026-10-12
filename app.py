@@ -963,6 +963,18 @@ with st.sidebar:
                         f"{'set' if v else 'missing — sample mode'}</span>",
                         unsafe_allow_html=True)
         st.divider()
+    # API budget: Lumify credits are finite (1,000 free). Every real
+    # network call is logged in odds/cache.py — cache hits are free.
+    # Surface the burn rate so credit use stays a conscious choice.
+    try:
+        from odds import cache as _cache
+        _used7 = _cache.usage_total(days=7, source="lumify")
+        _used30 = _cache.usage_total(days=30, source="lumify")
+        if _used7 or _used30:
+            st.caption(f"⚡ API use — {_used7} credits / 7d · "
+                       f"{_used30} / 30d (1,000 free total)")
+    except Exception:
+        pass
     # Sport selector: segmented control with sport-specific accent colors.
     # NFL gold (brand), NBA orange (ball), MLB red (stitches).
     _sport_choice = st.segmented_control(

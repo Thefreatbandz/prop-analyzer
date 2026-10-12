@@ -108,7 +108,7 @@ def test_list_events_requests_scheduled(monkeypatch):
     monkeypatch.setattr(lumify.requests, "get", fake_get)
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
     monkeypatch.setattr(lumify, "cached_get",
-                        lambda source, key, ttl, fetcher, force=False: fetcher())
+                        lambda source, key, ttl, fetcher, force=False, cost_fn=None: fetcher())
     events = lumify.list_events()
     assert seen["params"]["status"] == "scheduled"
     assert events == [{"id": 1, "status": "scheduled"}]
@@ -167,3 +167,32 @@ def test_get_player_props_no_games_with_props(monkeypatch):
     board = lumify.get_player_props()
     assert board["props"] == []
     assert "no" in board["note"] and "props" in board["note"]
+
+
+def test_cache_logs_usage_on_miss(tmp_path, monkeypatch):
+    """Every real network call is logged with its credit cost."""
+    from odds import cache
+    monkeypatch.setattr(cache, "CACHE_DB", str(tmp_path / "t.db"))
+    cache.get("lumify", "k1", 3600, lambda: {"a": 1}, cost_fn=lambda _p: 1)
+    cache.get("lumify", "k2", 3600, lambda: {"b": 2}, cost_fn=lambda _p: 0)
+    # Cache hit: no new log row.
+    cache.get("lumify", "k1", 3600, lambda: {"a": 1}, cost_fn=lambda _p: 1)
+    assert cache.usage_total(days=7, source="lumify") == 1
+    assert cache.usage_total(days=7) == 1
+    by_day = cache.usage_by_day(days=7)
+    assert len(by_day) == 1 and by_day[0][1] == 1
+
+
+def test_props_cost_fn_free_when_no_lines(tmp_path, monkeypatch):
+    """Lumify charges only when lines exist; empty boards are free."""
+    import odds.lumify as lum
+    from odds import cache
+    monkeypatch.setattr(cache, "CACHE_DB", str(tmp_path / "t.db"))
+    monkeypatch.setattr(lum, "_key", lambda: "lmfy-test")
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"player_props": [], "available": False}
+    monkeypatch.setattr(lum.requests, "get", lambda *a, **k: R())
+    lum.fetch_props("evt-empty", sport="nfl", force=True)
+    assert cache.usage_total(days=7, source="lumify") == 0

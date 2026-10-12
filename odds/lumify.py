@@ -19,8 +19,9 @@ from .cache import get as cached_get
 
 BASE = "https://lumify.ai/v1"
 # Props lines move slower than game lines and credits are precious:
+# 12h cache — pre-game lines barely move intraday.
 # 6h TTL, refreshed on demand on game days.
-TTL_SECONDS = 6 * 60 * 60
+TTL_SECONDS = 12 * 60 * 60
 
 SPORTS = ("nfl", "nba", "mlb")
 
@@ -70,7 +71,7 @@ def list_events(status: str = "scheduled", sport: str = "nfl",
         return data.get("events", data if isinstance(data, list) else [])
 
     return cached_get("lumify", f"{sport}_events_{status}", 3600, _fetch,
-                      force=force)
+                      force=force, cost_fn=lambda _p: 1)
 
 
 def fetch_props(event_id: str, sport: str = "nfl", force: bool = False) -> dict:
@@ -86,7 +87,17 @@ def fetch_props(event_id: str, sport: str = "nfl", force: bool = False) -> dict:
         r.raise_for_status()
         return r.json()
 
-    return cached_get("lumify", f"{sport}_props_{event_id}", TTL_SECONDS, _fetch, force=force)
+    def _cost(board):
+        # Lumify charges 1 credit only when lines exist; an
+        # `available: false` (no props posted) check is free.
+        try:
+            props = board.get("player_props", board.get("props", []))
+            return 1 if props else 0
+        except Exception:
+            return 1  # unknown shape — assume billed
+
+    return cached_get("lumify", f"{sport}_props_{event_id}", TTL_SECONDS,
+                      _fetch, force=force, cost_fn=_cost)
 
 
 def get_player_props(event_id: str | None = None, sport: str = "nfl",

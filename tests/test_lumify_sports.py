@@ -80,7 +80,7 @@ def test_list_events_passes_sport(monkeypatch):
     monkeypatch.setattr(lumify, "_key", lambda: "lmfy-test")
     # Bypass the 1h events cache so the test sees the real HTTP call.
     monkeypatch.setattr(lumify, "cached_get",
-                        lambda source, key, ttl, fetcher, force=False: fetcher())
+                        lambda source, key, ttl, fetcher, force=False, cost_fn=None: fetcher())
     assert lumify.list_events(sport="mlb") == []
     assert seen.get("sport") == "mlb"
     assert lumify.list_events() == []  # default still NFL
@@ -90,7 +90,7 @@ def test_list_events_passes_sport(monkeypatch):
 def test_fetch_props_cache_key_includes_sport(monkeypatch, tmp_path):
     keys = []
 
-    def fake_cached_get(source, key, ttl, fetcher, force=False):
+    def fake_cached_get(source, key, ttl, fetcher, force=False, cost_fn=None):
         keys.append((source, key))
         return {"props": []}
 
