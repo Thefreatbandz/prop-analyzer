@@ -1029,6 +1029,7 @@ def _player_trends_dialog(player_name):
     trends the Players tab shows (bio, form, game log, headlines) in a
     modal so you never leave where you are.
     """
+    from players import profiles
     try:
         bio = profiles.find_player(_rosters_df(), player_name)
         if not bio:
