@@ -1021,6 +1021,78 @@ def _goto(section, **state):
     return _cb
 
 
+@st.dialog("Player trends", width="large")
+def _player_trends_dialog(player_name):
+    """Popup trends for a player — the content comes to you.
+
+    Tapped from "Explore player trends" on Scan cards. Renders the same
+    trends the Players tab shows (bio, form, game log, headlines) in a
+    modal so you never leave where you are.
+    """
+    try:
+        bio = profiles.find_player(_rosters_df(), player_name)
+        if not bio:
+            st.caption(f"No profile found for {player_name}.")
+            return
+        season, week = _cur_week()
+        team_abbr = bio.get("team")
+        st.markdown(
+            f"### {bio['name']} "
+            f"<span style='color:#C9A227'>#{bio['jersey'] or ''} "
+            f"{bio['position'] or ''} · {team_abbr or ''}</span>",
+            unsafe_allow_html=True)
+        if bio.get("status") and bio["status"] != "Active":
+            st.warning(f"Roster status: {bio['status']}")
+        inj = profiles.latest_injury_status(_injuries_df(), player_name,
+                                            team_abbr, season, week)
+        if inj and inj.get("status"):
+            st.warning(f"Injury report (wk {inj['week']}): **{inj['status']}**"
+                       f" — {inj.get('details') or ''}")
+
+        st.markdown("**Recent form**")
+        try:
+            form = profiles.player_form_summary(
+                _player_stats_df(), player_name,
+                (bio or {}).get("position"), season)
+            if form and form.get("games"):
+                _l5 = form["last5"]
+                _l5avg = (sum(_l5) / len(_l5)) if _l5 else 0
+                _f1, _f2 = st.columns(2)
+                _f1.metric("Season avg", form["season_avg"])
+                _f2.metric("Last 5 avg", round(_l5avg, 1),
+                           delta=f"{_l5avg - form['season_avg']:+.1f} vs season")
+                st.caption(f"{form['games']} games · last 5: "
+                           f"{', '.join(str(v) for v in _l5)}")
+        except Exception:
+            pass
+
+        st.markdown("**Game log — last 5**")
+        try:
+            log = profiles.game_log(_player_stats_df(), player_name, last_n=5)
+            if log:
+                import pandas as pd
+                st.dataframe(pd.DataFrame(log), use_container_width=True,
+                             hide_index=True)
+            else:
+                st.caption("No game log available.")
+        except Exception:
+            st.caption("No game log available.")
+
+        st.markdown("**Related headlines**")
+        try:
+            from news import espn as news_mod
+            hits = news_mod.news_for_player(_espn_news(), player_name)[:3]
+            if hits:
+                for h in hits:
+                    st.markdown(f"- {h.get('title', '')}")
+            else:
+                st.caption("No recent headlines.")
+        except Exception:
+            st.caption("Headlines unavailable.")
+    except Exception:
+        st.caption("Couldn't load trends for this player right now.")
+
+
 # ---------- Global player search (sidebar) ----------
 with st.sidebar:
     st.divider()
@@ -1482,12 +1554,12 @@ if nav == "Scan":
                         news_count=_nhits2,
                     ),
                     unsafe_allow_html=True)
-                # Explore-trends jump: the card's affordance is visual;
-                # this real button drives the Players view.
-                st.button("📈 Explore player trends",
-                          key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}",
-                          on_click=_goto("Players",
-                                        player_focus=p.get("player")))
+                # Explore-trends popup: the trends come to you — a modal
+                # over the current tab, no navigation away.
+                if st.button(
+                        "📈 Explore player trends",
+                        key=f"explore_{_p_sport}_{p.get('player', '')}_{p.get('market', '')}_{i}"):
+                    _player_trends_dialog(p.get("player"))
             if p.get("injury_flag"):
                 _flag = html.escape(str(p["injury_flag"]))
                 st.markdown(f"<span class='flag-warn'>{_flag}</span>",
