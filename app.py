@@ -1186,7 +1186,7 @@ with st.sidebar:
 # (both premium). `nav` lives in session state so Home quick-links and
 # the sidebar player search can jump straight to a section.
 NAV_PAGES = ["Home", "Scan", "Teams", "Players", "Intel", "Track",
-             "Builder", "Lab"]
+             "Builder", "Lab", "Legal"]
 if "nav" not in st.session_state:
     st.session_state["nav"] = "Home"
 _nav = st.segmented_control("Section", NAV_PAGES, key="nav",
@@ -1637,6 +1637,40 @@ if nav == "Scan":
             st.button("Details", key=f"det_{i}",
                       on_click=_goto("Builder", selected_pick=p,
                                      builder_sub="Pick detail"))
+
+# ---------------- Legal: privacy, terms, about ----------------
+if nav == "Legal":
+    st.markdown("## Legal")
+    _ltab1, _ltab2, _ltab3 = st.tabs(
+        ["Privacy Policy", "Terms of Service", "About"])
+    with _ltab1:
+        from legal import privacy as _lp
+        st.caption(f"Last updated: {_lp.LAST_UPDATED}")
+        st.markdown(_lp.BODY)
+    with _ltab2:
+        from legal import terms as _lt
+        st.caption(f"Last updated: {_lt.LAST_UPDATED}")
+        st.markdown(_lt.BODY)
+    with _ltab3:
+        st.markdown("""## About BANDZ EDGE
+
+BANDZ EDGE is an independent sports prop analysis dashboard built
+by **Tbandz** (Thefreatbandz on GitHub) — a developer building a
+software portfolio one shipped app at a time.
+
+**What it does:** compares sportsbook player-prop lines against
+statistical projections across NFL, NBA, and MLB, and flags
+potential edges honestly — including when the model is unsure.
+
+**What it doesn't do:** place bets, handle money, track users,
+or sell data. Analysis only.
+
+**Contact:** open an issue on the
+[GitHub repository](https://github.com/Thefreatbandz/prop-analyzer).
+
+**Data sources:** nflverse, ESPN public APIs, NBA/MLB official
+CDNs for headshots, Lumify for live odds (user-configured key).
+""")
 
 # ---------------- Track: the public proof + paper ledger ----------------
 if nav == "Track":
