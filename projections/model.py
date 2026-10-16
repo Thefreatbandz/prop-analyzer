@@ -170,6 +170,10 @@ def injury_status(injuries_df, player_name: str, team: str,
             & (pl.col("season") == season)
             & (pl.col("week") <= week)
         ).sort("week")
+        # Ambiguous: several same-last-name players on one team — don't
+        # guess whose injury report this is (e.g. Emanuel vs Roman Wilson).
+        if rep.height > 0 and rep["full_name"].n_unique() > 1:
+            return None
     if rep.height == 0:
         return None
     return rep.to_dicts()[-1].get("report_status")
