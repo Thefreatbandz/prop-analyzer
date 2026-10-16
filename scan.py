@@ -47,7 +47,7 @@ def load_distributions(mode: str, sport: str = "nfl") -> dict:
             return build.build_mlb_distributions(_board_players(sport))
         season, week = build.current_nfl_week()
         print(f"Live model: {season} week {week}, nflverse 2015–present ...")
-        return build.build_distributions(build.sample_players(), season, week)
+        return build.build_distributions(_board_players(sport), season, week)
     path = os.path.join("projections", "samples",
                         f"{sport}_distributions.json"
                         if sport != "nfl" else "player_distributions.json")
@@ -116,12 +116,12 @@ def main() -> None:
         from tracker import db
 
         n = 0
-        for p in ml_picks + prop_picks:
+        for p in prop_picks:
             if db.log_pick(p):
                 n += 1
         print(f"\nLogged {n} paper picks to the tracker.")
 
-    if not ml_picks and not prop_picks:
+    if not prop_picks:
         print("\nNo +EV flags at the current threshold. The market is sharp today.")
 
 
