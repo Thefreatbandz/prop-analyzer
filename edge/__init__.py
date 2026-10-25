@@ -39,9 +39,9 @@ def load_parlays(db_path: str | None = None) -> list[dict]:
 
     Returns parlays ordered by first-logged leg, each with:
     name, game_date (earliest leg), legs (in logged order), where a
-    leg is {id, player, side, line, stat, book, price, fair_prob,
-    ev_pct, result}. Picks without a parlay key are ignored — they
-    are single picks, not Edge parlays.
+    leg is {id, player, side, line, stat, market, book, price,
+    fair_prob, ev_pct, result}. Picks without a parlay key are
+    ignored — they are single picks, not Edge parlays.
     """
     try:
         conn = _conn(db_path)
@@ -72,6 +72,7 @@ def load_parlays(db_path: str | None = None) -> list[dict]:
             "side": detail.get("side", ""),
             "line": r["line"],
             "stat": detail.get("label", ""),
+            "market": detail.get("market", ""),
             "book": r["book"],
             "price": r["price"],
             "fair_prob": r["fair_prob"],
@@ -124,6 +125,90 @@ def parlay_status(parlay: dict) -> str:
     if any(r == "win" for r in results):
         return "WON"
     return "VOID"
+
+
+# Tracker stat label -> ESPN boxscore market key. Tracker legs store
+# the human label (e.g. "passing yards"); newer legs also store the
+# market key directly, which takes precedence.
+LABEL_TO_MARKET = {
+    "passing yards": "player_pass_yds",
+    "passing tds": "player_pass_tds",
+    "rushing yards": "player_rush_yds",
+    "rushing tds": "player_rush_tds",
+    "receiving yards": "player_rec_yds",
+    "receptions": "player_receptions",
+    "receiving tds": "player_rec_tds",
+}
+
+
+def leg_market(leg: dict) -> str:
+    """ESPN market key for a leg: stored market first, else label map."""
+    market = (leg.get("market") or "").strip()
+    if market:
+        return market
+    return LABEL_TO_MARKET.get((leg.get("stat") or "").strip().lower(), "")
+
+
+def leg_progress(leg: dict, games: list[dict]) -> dict:
+    """Live progress for one leg against games with boxscores.
+
+    games: [{status ('live'|'final'), detail, boxscore}] — boxscore in
+    live.espn.get_boxscore shape. Pure function: no network, no
+    Streamlit, so tests drive it with fake games.
+
+    Returns {state, current, game_detail}:
+      live: player has a stat in a live game.
+      final: player has a stat in a final game.
+      no_stats: player found in no game's boxscore (game not started,
+        or player hasn't recorded a stat yet).
+      untrackable: the leg's stat has no ESPN market mapping.
+    """
+    from live import espn as _le
+
+    market = leg_market(leg)
+    if not market:
+        return {"state": "untrackable", "current": None, "game_detail": ""}
+    for g in games:
+        val = _le.player_live_stat(g.get("boxscore") or {},
+                                   leg["player"], market)
+        if val is not None:
+            state = g.get("status")
+            if state not in ("live", "final"):
+                state = "live"
+            return {"state": state, "current": val,
+                    "game_detail": g.get("detail", "")}
+    return {"state": "no_stats", "current": None, "game_detail": ""}
+
+
+def progress_text(leg: dict, prog: dict, game_date: str | None,
+                  today_str: str) -> str:
+    """Human line for a leg's live progress.
+
+    Over legs clinch mid-game (stats only grow); under legs can only
+    clinch at final, so a live under shows room to spare instead of
+    a premature HIT. A final under/over is reported as final, not
+    graded here — grading is the Grade-now button's job.
+    """
+    state, cur = prog["state"], prog["current"]
+    line, stat, side = leg["line"], leg["stat"], leg["side"]
+    if state == "untrackable":
+        return "live tracking unavailable for this stat"
+    if state == "final":
+        return f"final: {cur:g} / {line:g} {stat} — ready to grade"
+    if state == "live":
+        if side == "over":
+            if cur > line:
+                return f"HIT — {cur:g} / {line:g} {stat} ✓"
+            if cur == line:
+                return f"at the line — {cur:g} / {line:g} {stat}"
+            return f"{cur:g} / {line:g} {stat} — needs {line - cur:g} more"
+        if cur >= line:
+            return (f"{cur:g} / {line:g} {stat} — line already covered, "
+                    f"leg lost")
+        return f"{cur:g} / {line:g} {stat} — {line - cur:g} to spare"
+    if game_date and game_date > today_str:
+        return "not started"
+    return "no stats yet"
 
 
 def learning_summary(db_path: str | None = None) -> dict:
@@ -212,6 +297,62 @@ def render() -> None:
                 + (f" · EV {leg['ev_pct']:+.1f}%" if leg["ev_pct"] is not None else "")
                 + f" · {result}"
             )
+
+    # --- Live leg tracking (Feature 1) ---
+    pending = [p for p in parlays if parlay_status(p) == "PENDING"]
+    pending_legs = [leg for p in pending for leg in p["legs"]
+                    if leg["result"] is None]
+    if pending_legs:
+        st.markdown("## Live leg tracking")
+        st.caption(
+            "Refreshes every minute while games are live. Stats come "
+            "from ESPN's free public box scores — text stats only, "
+            "not Next Gen Stats tracking (no routes, speed, or "
+            "separation). Over legs clinch mid-game; under legs can "
+            "only clinch at final."
+        )
+
+        @st.fragment(run_every=60)
+        def _edge_live():
+            import datetime as _dt
+
+            from live import espn as _le
+            try:
+                sb = _le.get_scoreboard()
+            except Exception:
+                sb = []
+            if not sb:
+                st.caption("Live data unavailable right now — ESPN's "
+                           "feed didn't respond. Tracking returns "
+                           "automatically.")
+                return
+            games = []
+            for g in sb:
+                if g.get("status") not in ("live", "final"):
+                    continue
+                try:
+                    bs = _le.get_boxscore(g["id"])
+                except Exception:
+                    bs = {}
+                games.append({"status": g["status"],
+                              "detail": g.get("detail", ""),
+                              "boxscore": bs})
+            today = _dt.date.today().isoformat()
+            for parlay in pending:
+                legs = [l for l in parlay["legs"]
+                        if l["result"] is None]
+                if not legs:
+                    continue
+                st.markdown(f"**{parlay['name']}**")
+                for leg in legs:
+                    prog = leg_progress(leg, games)
+                    txt = progress_text(leg, prog, parlay["game_date"],
+                                        today)
+                    st.markdown(
+                        f"- **{leg['player']}** {leg['side']} "
+                        f"{leg['line']} {leg['stat']}: {txt}"
+                    )
+        _edge_live()
 
     st.markdown("## How The Edge Gets Better")
     st.caption(

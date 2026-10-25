@@ -7,8 +7,85 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from edge import (combined_prob, learning_summary, load_parlays,
-                  parlay_odds, parlay_status)
+from edge import (combined_prob, learning_summary, leg_market,
+                  leg_progress, load_parlays, parlay_odds, parlay_status,
+                  progress_text)
+
+
+def _fake_game(status, detail, stats_by_player):
+    """One game in live.espn boxscore shape.
+
+    stats_by_player: {display_name: {category: stats_list}}.
+    """
+    from live.espn import norm_name
+
+    cats: dict = {}
+    for name, cat_stats in stats_by_player.items():
+        for cat, stats in cat_stats.items():
+            cats.setdefault(cat, {})[norm_name(name)] = {
+                "name": name, "stats": stats}
+    return {"status": status, "detail": detail,
+            "boxscore": {"KC": cats}}
+
+
+def test_leg_market_maps_labels_and_passthrough():
+    assert leg_market({"stat": "passing yards", "market": ""}) == "player_pass_yds"
+    assert leg_market({"stat": "receptions", "market": ""}) == "player_receptions"
+    assert leg_market({"stat": "Receiving TDs", "market": ""}) == "player_rec_tds"
+    assert leg_market({"stat": "passing yards",
+                       "market": "player_pass_yds"}) == "player_pass_yds"
+    assert leg_market({"stat": "mystery stat", "market": ""}) == ""
+
+
+def test_leg_progress_live_over_states():
+    leg = {"player": "Patrick Mahomes", "side": "over", "line": 200.0,
+           "stat": "passing yards", "market": ""}
+    # passing stats: C/ATT/YDS/YPA/TD/INT/SACKS/RTG -> YDS index 1.
+    live_game = _fake_game("live", "Q3 4:12", {
+        "Patrick Mahomes": {"passing": ["20/28", 180, 6.4, 2, 0, 1, 110.0]}})
+    prog = leg_progress(leg, [live_game])
+    assert prog["state"] == "live" and prog["current"] == 180.0
+    assert progress_text(leg, prog, "2026-10-25", "2026-10-25") == (
+        "180 / 200 passing yards — needs 20 more")
+    hit_game = _fake_game("live", "Q4 2:00", {
+        "Patrick Mahomes": {"passing": ["24/32", 215, 6.7, 2, 0, 1, 112.0]}})
+    prog = leg_progress(leg, [hit_game])
+    assert progress_text(leg, prog, "2026-10-25", "2026-10-25").startswith("HIT")
+
+
+def test_leg_progress_under_spare_and_lost_and_final():
+    leg = {"player": "Josh Jacobs", "side": "under", "line": 80.5,
+           "stat": "rushing yards", "market": ""}
+    # rushing stats: CAR/YDS/YPA/TD/LONG -> YDS index 1.
+    live_game = _fake_game("live", "Q2 8:00", {
+        "Josh Jacobs": {"rushing": [9, 45, 5.0, 0, 12]}})
+    prog = leg_progress(leg, [live_game])
+    assert progress_text(leg, prog, "2026-10-25", "2026-10-25") == (
+        "45 / 80.5 rushing yards — 35.5 to spare")
+    lost_game = _fake_game("live", "Q4 1:00", {
+        "Josh Jacobs": {"rushing": [20, 88, 4.4, 1, 15]}})
+    prog = leg_progress(leg, [lost_game])
+    assert "leg lost" in progress_text(leg, prog, "2026-10-25", "2026-10-25")
+    final_game = _fake_game("final", "Final", {
+        "Josh Jacobs": {"rushing": [18, 70, 3.9, 0, 14]}})
+    prog = leg_progress(leg, [final_game])
+    assert prog["state"] == "final"
+    assert "ready to grade" in progress_text(
+        leg, prog, "2026-10-25", "2026-10-26")
+
+
+def test_leg_progress_no_stats_and_not_started_and_untrackable():
+    leg = {"player": "Nobody", "side": "over", "line": 10.0,
+           "stat": "receiving yards", "market": ""}
+    prog = leg_progress(leg, [_fake_game("live", "Q1", {})])
+    assert prog["state"] == "no_stats"
+    assert progress_text(leg, prog, "2026-10-25", "2026-10-25") == "no stats yet"
+    assert progress_text(leg, prog, "2026-10-26", "2026-10-25") == "not started"
+    weird = {"player": "Nobody", "side": "over", "line": 10.0,
+             "stat": "mystery stat", "market": ""}
+    prog = leg_progress(weird, [])
+    assert prog["state"] == "untrackable"
+    assert "unavailable" in progress_text(weird, prog, None, "2026-10-25")
 
 
 def _make_db(path, rows):
