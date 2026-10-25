@@ -109,5 +109,89 @@ def test_get_scoreboard_failure_is_empty():
     try:
         assert espn.get_scoreboard() == []
         assert espn.get_boxscore("123") == {}
+        assert espn.get_play_by_play("123") == []
     finally:
         espn._get = real_get
+
+
+def test_get_scoreboard_records():
+    sample = {
+        "events": [{
+            "id": "401873020",
+            "competitions": [{
+                "status": {"type": {"state": "in",
+                                    "shortDetail": "15:00 - 2nd"}},
+                "competitors": [
+                    {"homeAway": "away",
+                     "score": "7",
+                     "records": [{"type": "total", "summary": "4-2"},
+                                 {"type": "home", "summary": "2-1"}],
+                     "team": {"abbreviation": "GB"}},
+                    {"homeAway": "home",
+                     "score": "7",
+                     "records": [{"type": "total", "summary": "3-2"}],
+                     "team": {"abbreviation": "DET"}},
+                ],
+            }],
+        }],
+    }
+    real_get = espn._get
+    espn._get = lambda url, params=None, timeout=20: sample  # noqa: E731
+    try:
+        games = espn.get_scoreboard()
+    finally:
+        espn._get = real_get
+    assert len(games) == 1
+    assert games[0]["away_record"] == "4-2"
+    assert games[0]["home_record"] == "3-2"
+
+
+def test_get_play_by_play_parses():
+    sample = {
+        "drives": {
+            "previous": [{
+                "plays": [
+                    {"type": {"text": "Pass Reception"},
+                     "text": "J.Goff pass short left to A.St. Brown "
+                             "for 8 yards (J.Jacobs).",
+                     "period": {"number": 1},
+                     "clock": {"displayValue": "12:00"},
+                     "awayScore": "0", "homeScore": "0",
+                     "scoringPlay": False},
+                    {"type": {"text": "Rush"},
+                     "text": "J.Gibbs right tackle for 12 yards.",
+                     "period": {"number": 1},
+                     "clock": {"displayValue": "11:20"},
+                     "awayScore": "0", "homeScore": "0",
+                     "scoringPlay": False},
+                ],
+            }],
+            "current": {
+                "plays": [
+                    {"type": {"text": "Pass Touchdown"},
+                     "text": "J.Goff pass deep to A.St. Brown "
+                             "for 30 yards, TOUCHDOWN.",
+                     "period": {"number": 1},
+                     "clock": {"displayValue": "10:05"},
+                     "awayScore": "0", "homeScore": "7",
+                     "scoringPlay": True},
+                ],
+            },
+        },
+    }
+    real_get = espn._get
+    espn._get = lambda url, params=None, timeout=20: sample  # noqa: E731
+    try:
+        plays = espn.get_play_by_play("401873020")
+    finally:
+        espn._get = real_get
+    # Most recent first: current-drive TD, then the two previous plays.
+    assert len(plays) == 3
+    assert plays[0]["scoring"] is True
+    assert "TOUCHDOWN" in plays[0]["text"]
+    assert plays[0]["period"] == 1 and plays[0]["clock"] == "10:05"
+    assert plays[0]["home_score"] == "7"
+    assert plays[1]["type"] == "Rush"
+    assert "Gibbs" in plays[1]["text"]
+    assert plays[2]["type"] == "Pass Reception"
+    assert "Goff" in plays[2]["text"]

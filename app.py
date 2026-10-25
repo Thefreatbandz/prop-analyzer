@@ -503,6 +503,16 @@ def _live_boxscore(event_id: str) -> dict:
         return {}
 
 
+@st.cache_data(ttl=30, show_spinner="Loading play-by-play...")
+def _live_pbp(event_id: str) -> list:
+    """Play-by-play for one game, most recent first (ESPN, free)."""
+    from live import espn as _le
+    try:
+        return _le.get_play_by_play(event_id)
+    except Exception:
+        return []
+
+
 def _model_dists(board: list, model_mode: str, sport: str) -> dict:
     """Bundled dists, plus on-demand builds for board players not covered.
 
@@ -1184,7 +1194,7 @@ with st.sidebar:
 # Builder keeps Pick detail as a drill-down, Lab = backtest + compare
 # (both premium). `nav` lives in session state so Home quick-links and
 # the sidebar player search can jump straight to a section.
-NAV_PAGES = ["Home", "Scan", "Teams", "Players", "Intel", "Track",
+NAV_PAGES = ["Home", "Live", "Scan", "Teams", "Players", "Intel", "Track",
              "Builder", "The Edge", "Lab", "Legal"]
 if "nav" not in st.session_state:
     st.session_state["nav"] = "Home"
@@ -1320,6 +1330,78 @@ if nav == "Home":
             st.button(f"{_icon} {_name}", key=f"home_goto_{_name}",
                       help=_desc, use_container_width=True,
                       on_click=_goto(_name))
+
+# ---------------- Live ----------------
+if nav == "Live":
+    st.markdown("**Live scores & play-by-play**")
+    st.caption(
+        "Live scores and play descriptions from ESPN's free public API "
+        "(no key needed). Each play description names who got the ball "
+        "— passer, receiver, or ball carrier. Text only: this is not "
+        "Next Gen Stats tracking, so no routes, speed, or separation "
+        "data. The feed runs roughly 30–60 seconds behind live TV.")
+    if sport != "nfl":
+        st.info("Live scores are NFL only for now — switch sport to NFL.")
+    else:
+        _sb = _live_scoreboard()
+        if not _sb:
+            st.warning("Live data unavailable right now — ESPN's feed "
+                       "didn't respond. Scores return automatically.")
+        else:
+            _live_games = [g for g in _sb if g.get("live")]
+            _pre = [g for g in _sb if g.get("status") == "pre"]
+            _fin = [g for g in _sb if g.get("status") == "final"]
+            if _live_games:
+                st.markdown(
+                    f"**<span class=\"live-dot\"></span> Live now"
+                    f"</strong> — {len(_live_games)} game"
+                    f"{'s' if len(_live_games) != 1 else ''}",
+                    unsafe_allow_html=True)
+            for _g in _live_games + _pre + _fin:
+                _ar = (f" ({_g['away_record']})"
+                       if _g.get("away_record") else "")
+                _hr = (f" ({_g['home_record']})"
+                       if _g.get("home_record") else "")
+                st.markdown(
+                    f'<div class="live-game">'
+                    f'<div class="live-teams">{_g["away"]}{_ar} '
+                    f'{_g["away_score"]} @ {_g["home"]}{_hr} '
+                    f'{_g["home_score"]}</div>'
+                    f'<div class="live-clock">{_g["detail"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True)
+            # --- Play-by-play for one live game ---
+            if _live_games:
+                st.markdown("**Play-by-play**")
+                _labels = {
+                    f'{g["away"]} @ {g["home"]} — {g["detail"]}': g["id"]
+                    for g in _live_games
+                }
+                st.selectbox("Game", list(_labels.keys()),
+                             key="live_pbp_game")
+
+                @st.fragment(run_every=60)
+                def _live_pbp_view():
+                    _eid = _labels.get(
+                        st.session_state.get("live_pbp_game", ""), "")
+                    if not _eid:
+                        return
+                    _plays = _live_pbp(_eid)
+                    if not _plays:
+                        st.caption("No plays yet for this game — "
+                                   "check back after kickoff.")
+                        return
+                    st.caption("Most recent first · refreshes "
+                               "every minute.")
+                    for _p in _plays[:60]:
+                        _sc = " 🏈" if _p.get("scoring") else ""
+                        st.markdown(
+                            f"**Q{_p['period']} {_p['clock']}** — "
+                            f"{_p['text']}{_sc}")
+                _live_pbp_view()
+            else:
+                st.caption("No games live right now — play-by-play "
+                           "appears here once a game kicks off.")
 
 # ---------------- Scan ----------------
 if nav == "Scan":

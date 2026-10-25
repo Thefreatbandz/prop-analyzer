@@ -53,9 +53,19 @@ def _get(url: str, params: dict | None = None, timeout: int = 20) -> dict:
     return r.json()
 
 
+def _overall_record(competitor: dict) -> str:
+    """Overall W-L summary (e.g. '4-2') from a scoreboard competitor."""
+    for r in competitor.get("records") or []:
+        if r.get("type") == "total":
+            return r.get("summary", "")
+    recs = competitor.get("records") or []
+    return recs[0].get("summary", "") if recs else ""
+
+
 def get_scoreboard() -> list[dict]:
     """Today's games: [{id, away, home, away_score, home_score,
-    status ('live'|'pre'|'final'), detail ('2:34 - 1st'), live: bool}]."""
+    away_record, home_record, status ('live'|'pre'|'final'),
+    detail ('2:34 - 1st'), live: bool}]."""
     try:
         data = _get(SCOREBOARD_URL)
     except Exception:
@@ -74,6 +84,8 @@ def get_scoreboard() -> list[dict]:
             "home": (home.get("team") or {}).get("abbreviation", ""),
             "away_score": away.get("score", ""),
             "home_score": home.get("score", ""),
+            "away_record": _overall_record(away),
+            "home_record": _overall_record(home),
             "status": ("live" if state == "in"
                        else "final" if state == "post" else "pre"),
             "detail": st.get("shortDetail", ""),
@@ -109,6 +121,44 @@ def get_boxscore(event_id: str) -> dict:
                 cats[cat.get("name", "")] = players
         if cats:
             out[abbr] = cats
+    return out
+
+
+def get_play_by_play(event_id: str) -> list[dict]:
+    """Plays for one game, most recent first.
+
+    Each play: {type, text, period, clock, away_score, home_score,
+    scoring}. The text is ESPN's description, which names who got the
+    ball on the play (passer, receiver, or ball carrier) — text only,
+    not Next Gen Stats tracking (no routes, speed, or separation).
+    Empty list on any failure — the caller shows 'no live data',
+    never a crash.
+    """
+    try:
+        data = _get(SUMMARY_URL, params={"event": event_id})
+    except Exception:
+        return []
+    plays = []
+    drives = data.get("drives") or {}
+    for d in drives.get("previous") or []:
+        plays.extend(d.get("plays") or [])
+    current = drives.get("current") or {}
+    plays.extend(current.get("plays") or [])
+    out = []
+    for p in plays:
+        text = p.get("text", "")
+        if not text:
+            continue
+        out.append({
+            "type": (p.get("type") or {}).get("text", ""),
+            "text": text,
+            "period": (p.get("period") or {}).get("number", ""),
+            "clock": (p.get("clock") or {}).get("displayValue", ""),
+            "away_score": p.get("awayScore", ""),
+            "home_score": p.get("homeScore", ""),
+            "scoring": bool(p.get("scoringPlay")),
+        })
+    out.reverse()
     return out
 
 
