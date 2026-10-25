@@ -1185,7 +1185,7 @@ with st.sidebar:
 # (both premium). `nav` lives in session state so Home quick-links and
 # the sidebar player search can jump straight to a section.
 NAV_PAGES = ["Home", "Scan", "Teams", "Players", "Intel", "Track",
-             "Builder", "Lab", "Legal"]
+             "Builder", "The Edge", "Lab", "Legal"]
 if "nav" not in st.session_state:
     st.session_state["nav"] = "Home"
 _nav = st.segmented_control("Section", NAV_PAGES, key="nav",
@@ -1573,6 +1573,11 @@ if nav == "Scan":
             st.button("Details", key=f"det_{i}",
                       on_click=_goto("Builder", selected_pick=p,
                                      builder_sub="Pick detail"))
+
+# ---------------- The Edge: paper parlay builder + tracker ----------------
+if nav == "The Edge":
+    from edge import render as _edge_render
+    _edge_render()
 
 # ---------------- Legal: privacy, terms, about ----------------
 if nav == "Legal":
