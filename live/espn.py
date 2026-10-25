@@ -62,12 +62,14 @@ def _overall_record(competitor: dict) -> str:
     return recs[0].get("summary", "") if recs else ""
 
 
-def get_scoreboard() -> list[dict]:
-    """Today's games: [{id, away, home, away_score, home_score,
+def get_scoreboard(date: str | None = None) -> list[dict]:
+    """Today's games (or one date's games when date='YYYYMMDD' is
+    given): [{id, away, home, away_score, home_score,
     away_record, home_record, status ('live'|'pre'|'final'),
     detail ('2:34 - 1st'), live: bool}]."""
     try:
-        data = _get(SCOREBOARD_URL)
+        params = {"dates": date} if date else {}
+        data = _get(SCOREBOARD_URL, params=params)
     except Exception:
         return []
     out = []

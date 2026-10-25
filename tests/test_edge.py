@@ -99,10 +99,14 @@ def _make_db(path, rows):
                ev_pct REAL, closing_price REAL, result TEXT,
                profit_units REAL, detail TEXT)"""
     )
-    for i, (name, player, side, line, book, price, prob, ev, result) in enumerate(rows, start=1):
+    for i, row in enumerate(rows, start=1):
+        (name, player, side, line, book, price, prob, ev,
+         result) = row[:9]
+        label, market = row[9] if len(row) > 9 else ("stat", "")
         detail = {"player": player, "side": side, "line": line,
-                  "label": "stat", "book": book, "price": price,
-                  "fair_prob": prob, "ev_pct": ev, "type": "prop"}
+                  "label": label, "market": market, "book": book,
+                  "price": price, "fair_prob": prob, "ev_pct": ev,
+                  "type": "prop"}
         if name:
             detail["parlay"] = name
         conn.execute(
@@ -223,3 +227,135 @@ def test_draft_combined_prob_and_odds():
     assert parlay_odds(draft) == 211
     draft[0]["fair_prob"] = None
     assert combined_prob(draft) is None  # unknown prob -> no combined number
+
+
+def _grade_db(tmp_path, rows):
+    """DB with parlay legs; returns path. Rows use _make_db format."""
+    return _make_db(tmp_path / "g.db", rows)
+
+
+def _fake_sb_and_bs():
+    """Scoreboard + boxscores for 2026-10-25: KC@SEA final, GB@DET final."""
+    from live.espn import norm_name
+
+    def bs(players):
+        cats: dict = {}
+        for name, cat_stats in players.items():
+            for cat, stats in cat_stats.items():
+                cats.setdefault(cat, {})[norm_name(name)] = {
+                    "name": name, "stats": stats}
+        return {"KC": cats}  # team key is irrelevant to the lookup
+
+    sb = [
+        {"id": "g1", "away": "KC", "home": "SEA", "status": "final",
+         "detail": "Final"},
+        {"id": "g2", "away": "GB", "home": "DET", "status": "final",
+         "detail": "Final"},
+    ]
+    boxes = {
+        "g1": bs({
+            "Patrick Mahomes": {"passing": ["24/32", 215, 6.7, 2, 0, 1, 112.0]},
+            "Cooper Kupp": {"receiving": [3, 14, 4.7, 0, 9, 5]},
+        }),
+        "g2": bs({
+            "Jared Goff": {"passing": ["28/35", 240, 6.9, 2, 1, 0, 105.0]},
+            "Jahmyr Gibbs": {"rushing": [15, 68, 4.5, 1, 20]},
+            "Josh Jacobs": {"rushing": [18, 70, 3.9, 0, 14]},
+        }),
+    }
+    return sb, boxes
+
+
+def test_grade_pending_final_win_loss_and_void(tmp_path, monkeypatch):
+    import tracker.db as tdb
+    from edge import grade_pending
+
+    db = _grade_db(tmp_path, [
+        ("SNF", "Patrick Mahomes", "over", 200.0, "caesars", -197, 0.83,
+         25.13, None, ("passing yards", "player_pass_yds")),
+        ("SNF", "Cooper Kupp", "over", 20.0, "caesars", -420, 0.875,
+         8.28, None, ("receiving yards", "player_rec_yds")),
+        ("SNF", "Ghost Player", "over", 10.0, "caesars", -110, 0.6,
+         5.0, None, ("receiving yards", "player_rec_yds")),
+    ])
+    sb, boxes = _fake_sb_and_bs()
+    monkeypatch.setattr(tdb, "DB", db)
+    rep = grade_pending(db, lambda d: sb, lambda e: boxes[e])
+    graded = {(leg["player"], res) for _, leg, res, _ in rep["graded"]}
+    assert ("Patrick Mahomes", "win") in graded  # 215 > 200
+    assert ("Cooper Kupp", "loss") in graded  # 14 < 20
+    assert len(rep["voided"]) == 1  # Ghost: no game, all final -> push
+    # Grades persisted.
+    import sqlite3
+    conn = sqlite3.connect(db)
+    results = dict(conn.execute(
+        "SELECT id, result FROM picks ORDER BY id").fetchall())
+    conn.close()
+    assert results == {1: "win", 2: "loss", 3: "push"}
+
+
+def test_grade_pending_played_but_no_category_entry_is_zero(tmp_path,
+                                                            monkeypatch):
+    import tracker.db as tdb
+    from edge import grade_pending
+
+    # Kupp has a rushing entry only; his receiving leg is 0 yards.
+    from live.espn import norm_name
+    sb = [{"id": "g1", "away": "KC", "home": "SEA", "status": "final",
+           "detail": "Final"}]
+    boxes = {"g1": {"KC": {"rushing": {
+        norm_name("Cooper Kupp"): {"name": "Cooper Kupp",
+                                   "stats": [1, 5, 5.0, 0, 5]}}}}}
+    db = _grade_db(tmp_path, [
+        ("SNF", "Cooper Kupp", "under", 10.0, "caesars", -110, 0.6,
+         5.0, None, ("receiving yards", "player_rec_yds")),
+    ])
+    monkeypatch.setattr(tdb, "DB", db)
+    rep = grade_pending(db, lambda d: sb, lambda e: boxes[e])
+    assert rep["graded"][0][2] == "win"  # 0 < 10, not a void
+    assert rep["graded"][0][3] == 0.0
+
+
+def test_grade_pending_skips_live_and_pre(tmp_path, monkeypatch):
+    import tracker.db as tdb
+    from edge import grade_pending
+
+    sb = [{"id": "g1", "away": "KC", "home": "SEA", "status": "live",
+           "detail": "Q3"},
+          {"id": "g2", "away": "DAL", "home": "PHI", "status": "pre",
+           "detail": "Mon 8:15"}]
+    boxes = {"g1": {}, "g2": {}}
+    db = _grade_db(tmp_path, [
+        ("SNF", "Patrick Mahomes", "over", 200.0, "caesars", -197, 0.83,
+         25.13, None, ("passing yards", "player_pass_yds")),
+    ])
+    monkeypatch.setattr(tdb, "DB", db)
+    # Mahomes not in any boxscore and not all games final -> pending.
+    rep = grade_pending(db, lambda d: sb, lambda e: boxes[e])
+    assert rep["graded"] == [] and len(rep["skipped_pending"]) == 1
+
+
+def test_grade_pending_hypothetical_extras_reported_not_written(
+        tmp_path, monkeypatch):
+    import tracker.db as tdb
+    from edge import grade_pending
+
+    sb, boxes = _fake_sb_and_bs()
+    db = _grade_db(tmp_path, [
+        ("GB-DET 2026-10-25 PAPER-HYPOTHETICAL", "Jared Goff", "over",
+         225.5, "HYPOTHETICAL", -110, 0.824, 0.0, None,
+         ("passing yards", "player_pass_yds")),
+    ])
+    monkeypatch.setattr(tdb, "DB", db)
+    rep = grade_pending(db, lambda d: sb, lambda e: boxes[e])
+    # Goff graded from the tracker; Gibbs/Jacobs reported, not written.
+    assert rep["graded"][0][2] == "win"  # 240 > 225.5
+    hyp = {e["player"]: (s, implied)
+           for e, s, implied in rep["hypothetical"]}
+    assert hyp["Jahmyr Gibbs"] == (68.0, "win")  # 68 > 50.5 over
+    assert hyp["Josh Jacobs"] == (70.0, "win")  # 70 < 80.5 under
+    import sqlite3
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+    conn.close()
+    assert n == 1  # extras never inserted

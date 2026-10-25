@@ -240,6 +240,191 @@ def low_prob_legs(draft: list[dict]) -> list[dict]:
             if d.get("fair_prob") is not None and d["fair_prob"] < 0.55]
 
 
+def low_prob_legs(draft: list[dict]) -> list[dict]:
+    """Draft legs whose model probability is below 55% — warn, don't block."""
+    return [d for d in draft
+            if d.get("fair_prob") is not None and d["fair_prob"] < 0.55]
+
+
+# One-off, documented: the Oct 25 GB-DET paper-hypothetical parlay had
+# 3 legs, but the tracker's 10-plays-per-day cap blocked 2 of them, so
+# only Goff made it into tracker.db. These two live on The Edge
+# artifact card. Grading never writes them to the tracker — the Grade
+# button only reports their final stats here so they can be graded
+# manually from that card.
+HYPOTHETICAL_EXTRA_LEGS = [
+    {"player": "Jahmyr Gibbs", "side": "over", "line": 50.5,
+     "stat": "rushing yards", "game_date": "2026-10-25",
+     "teams": ("GB", "DET")},
+    {"player": "Josh Jacobs", "side": "under", "line": 80.5,
+     "stat": "rushing yards", "game_date": "2026-10-25",
+     "teams": ("GB", "DET")},
+]
+
+
+def _player_in_boxscore(boxscore: dict, player: str) -> bool:
+    """True if the player appears in any boxscore category."""
+    from live.espn import norm_name
+
+    key = norm_name(player)
+    for cats in boxscore.values():
+        for players in cats.values():
+            if key in players:
+                return True
+    return False
+
+
+def _grade_outcome(side: str, stat: float, line: float) -> str:
+    """win/loss/push for one leg's final stat vs its line."""
+    if side == "over":
+        return "win" if stat > line else "loss" if stat < line else "push"
+    return "win" if stat < line else "loss" if stat > line else "push"
+
+
+def grade_pending(db_path: str | None = None, scoreboard_fn=None,
+                  boxscore_fn=None) -> dict:
+    """Grade every PENDING tracker leg whose game is final.
+
+    scoreboard_fn(date_yyyymmdd) -> [{id, away, home, status, ...}];
+    boxscore_fn(event_id) -> boxscore dict. Defaults hit live.espn
+    (scoreboard takes a dates=YYYYMMDD param, so yesterday's games
+    grade fine). Pure except for the DB write and the injected
+    fetchers, so tests drive it with fake fetchers.
+
+    Grading rule per leg:
+      - player in a final game's boxscore (any category): stat for
+        the leg's market, or 0.0 if he has no entry in that category
+        (played but recorded nothing there). Compare to the line.
+      - player in a live game -> skipped, still live.
+      - player in a pre game -> skipped, not started.
+      - player in no game that date, and every game that date is
+        final -> push (void: did not play / no stats).
+      - otherwise skipped (that date's games still pending).
+
+    Returns a report dict: graded / skipped_live / skipped_pre /
+    skipped_pending / voided / hypothetical / errors. Writes grades
+    via tracker.grade_result().
+    """
+    from tracker import db as _tdb
+
+    if scoreboard_fn is None:
+        from live import espn as _le
+
+        def scoreboard_fn(date_yyyymmdd: str):
+            return _le.get_scoreboard(date_yyyymmdd)
+
+    if boxscore_fn is None:
+        from live import espn as _le
+
+        def boxscore_fn(event_id: str):
+            return _le.get_boxscore(event_id)
+
+    report: dict = {"graded": [], "skipped_live": [], "skipped_pre": [],
+                    "skipped_pending": [], "voided": [], "hypothetical": [],
+                    "errors": []}
+    parlays = load_parlays(db_path)
+    pending = [(p, leg) for p in parlays for leg in p["legs"]
+               if leg["result"] is None]
+    has_hyp = any("HYPOTHETICAL" in p["name"] for p in parlays)
+
+    if pending:
+        by_date: dict[str, list] = {}
+        for parlay, leg in pending:
+            if not parlay["game_date"]:
+                report["skipped_pending"].append(
+                    (parlay["name"], leg, "no game date"))
+                continue
+            by_date.setdefault(parlay["game_date"], []).append((parlay, leg))
+
+        for game_date, legs in sorted(by_date.items()):
+            yyyymmdd = game_date.replace("-", "")
+            try:
+                sb = scoreboard_fn(yyyymmdd)
+            except Exception:
+                sb = []
+            if not sb:
+                for parlay, leg in legs:
+                    report["errors"].append(
+                        (parlay["name"], leg, "scoreboard unavailable"))
+                continue
+            bs_cache: dict = {}
+
+            def _bs(event_id: str) -> dict:
+                if event_id not in bs_cache:
+                    try:
+                        bs_cache[event_id] = boxscore_fn(event_id) or {}
+                    except Exception:
+                        bs_cache[event_id] = {}
+                return bs_cache[event_id]
+
+            all_final = all(g.get("status") == "final" for g in sb)
+            for parlay, leg in legs:
+                found = None
+                for g in sb:
+                    if _player_in_boxscore(_bs(g["id"]), leg["player"]):
+                        found = g
+                        break
+                if found is None:
+                    if all_final and sb:
+                        _tdb.grade_result(leg["id"], "push")
+                        report["voided"].append((parlay["name"], leg,
+                                                 "did not play / no stats"))
+                    else:
+                        report["skipped_pending"].append(
+                            (parlay["name"], leg, "games still pending"))
+                    continue
+                if found.get("status") == "live":
+                    report["skipped_live"].append((parlay["name"], leg))
+                    continue
+                if found.get("status") != "final":
+                    report["skipped_pre"].append((parlay["name"], leg))
+                    continue
+                from live import espn as _le
+
+                stat = _le.player_live_stat(_bs(found["id"]), leg["player"],
+                                            leg_market(leg))
+                if stat is None:
+                    stat = 0.0  # played, but nothing in this category
+                result = _grade_outcome(leg["side"], stat, leg["line"])
+                _tdb.grade_result(leg["id"], result)
+                report["graded"].append((parlay["name"], leg, result, stat))
+
+    # Hypothetical extras: report final stats only, never write them.
+    # Runs whenever the hypothetical parlay exists in the tracker,
+    # even if its logged leg is already graded.
+    if not has_hyp:
+        return report
+    for extra in HYPOTHETICAL_EXTRA_LEGS:
+        yyyymmdd = extra["game_date"].replace("-", "")
+        try:
+            sb = scoreboard_fn(yyyymmdd)
+        except Exception:
+            sb = []
+        game = next((g for g in sb
+                     if {g.get("away"), g.get("home")} == set(extra["teams"])),
+                    None)
+        if game is None or game.get("status") != "final":
+            report["hypothetical"].append((extra, None, None))
+            continue
+        from live import espn as _le
+
+        try:
+            bs = boxscore_fn(game["id"]) or {}
+        except Exception:
+            bs = {}
+        stat = _le.player_live_stat(
+            bs, extra["player"],
+            LABEL_TO_MARKET.get(extra["stat"], ""))
+        if stat is None:
+            # Played but nothing in this category -> 0.0; absent from
+            # the boxscore entirely -> no stats (void), not zero.
+            stat = 0.0 if _player_in_boxscore(bs, extra["player"]) else None
+        implied = (_grade_outcome(extra["side"], stat, extra["line"])
+                   if stat is not None else "push")
+        report["hypothetical"].append((extra, stat, implied))
+    return report
+
+
 def learning_summary(db_path: str | None = None) -> dict:
     """Graded-result feedback for the learning loop.
 
@@ -543,6 +728,69 @@ def render(scan_picks: list[dict] | None = None) -> None:
                         f"It appears in the tracker list above.")
                     st.session_state["edge_draft"] = []
                     st.rerun()
+
+    # --- Grade now (Feature 3) ---
+    st.markdown("## Grade finished parlays")
+    st.caption(
+        "Tap Grade now after games go final. It pulls final box scores "
+        "from ESPN and grades every pending leg: win, loss, or void "
+        "(void = player did not play or recorded no stats). There is "
+        "no background scheduler — Streamlit Cloud can't run one "
+        "reliably — so this button is the honest design: you tap it "
+        "when games are done."
+    )
+    if "edge_grade_report" in st.session_state:
+        _rep = st.session_state["edge_grade_report"]
+        _n_graded = len(_rep.get("graded", []))
+        _n_void = len(_rep.get("voided", []))
+        if (not _n_graded and not _n_void
+                and not _rep.get("hypothetical")
+                and not _rep.get("errors")):
+            st.info("No pending legs to grade.")
+        for _name, _leg, _res, _stat in _rep.get("graded", []):
+            st.markdown(f"- ✅ {_leg['player']} {_leg['side']} "
+                        f"{_leg['line']:g} {_leg['stat']}: "
+                        f"final {_stat:g} → **{_res}** ({_name})")
+        for _name, _leg, _reason in _rep.get("voided", []):
+            st.markdown(f"- ⏭️ {_leg['player']} {_leg['side']} "
+                        f"{_leg['line']:g} {_leg['stat']}: "
+                        f"void — {_reason} ({_name})")
+        for _name, _leg in _rep.get("skipped_live", []):
+            st.markdown(f"- ⏳ {_leg['player']}: game still live, "
+                        f"not graded ({_name})")
+        for _name, _leg in _rep.get("skipped_pre", []):
+            st.markdown(f"- ⏳ {_leg['player']}: game not started, "
+                        f"not graded ({_name})")
+        for _name, _leg, _reason in _rep.get("skipped_pending", []):
+            st.markdown(f"- ⏳ {_leg['player']}: {_reason} ({_name})")
+        for _name, _leg, _reason in _rep.get("errors", []):
+            st.warning(f"⚠️ {_leg['player']}: {_reason} ({_name})")
+        for _extra, _stat, _implied in _rep.get("hypothetical", []):
+            if _stat is None:
+                st.markdown(
+                    f"- 📋 {_extra['player']} {_extra['side']} "
+                    f"{_extra['line']:g} {_extra['stat']}: no final "
+                    f"stats yet — grade manually from The Edge card.")
+            else:
+                st.markdown(
+                    f"- 📋 {_extra['player']} {_extra['side']} "
+                    f"{_extra['line']:g} {_extra['stat']}: final "
+                    f"{_stat:g} → would be **{_implied}** (manual "
+                    f"only — this leg is not in the tracker, so it "
+                    f"was not graded here).")
+        if st.button("Dismiss", key="edge_grade_dismiss"):
+            del st.session_state["edge_grade_report"]
+            st.rerun()
+    if st.button("Grade now", key="edge_grade_now"):
+        try:
+            _rep = grade_pending()
+        except Exception as _e:
+            _rep = {"graded": [], "skipped_live": [], "skipped_pre": [],
+                    "skipped_pending": [], "voided": [], "hypothetical": [],
+                    "errors": [("", {"player": "grading run"},
+                                f"grading failed: {_e}")]}
+        st.session_state["edge_grade_report"] = _rep
+        st.rerun()
 
     st.markdown("## How The Edge Gets Better")
     st.caption(
