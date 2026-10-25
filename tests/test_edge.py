@@ -176,3 +176,50 @@ def test_learning_summary_buckets_graded_legs(tmp_path):
 
 def test_missing_db_returns_empty():
     assert load_parlays("/nonexistent/dir/tracker.db") == []
+
+
+def _draft_leg(player, side, line, stat, price, prob):
+    return {"player": player, "side": side, "line": line, "stat": stat,
+            "market": "", "book": "caesars", "price": price,
+            "fair_prob": prob, "ev_pct": None}
+
+
+def test_validate_draft_blocks_short_duplicate_and_nameless():
+    from edge import low_prob_legs, validate_draft
+
+    one = [_draft_leg("A", "over", 10.0, "passing yards", -110, 0.6)]
+    assert "need at least 2 legs" in validate_draft(one, "P")
+    two = [_draft_leg("A", "over", 10.0, "passing yards", -110, 0.6),
+           _draft_leg("A", "over", 20.0, "passing yards", -110, 0.6)]
+    assert any("duplicate" in e for e in validate_draft(two, "P"))
+    ok = [_draft_leg("A", "over", 10.0, "passing yards", -110, 0.6),
+          _draft_leg("B", "under", 5.0, "rushing yards", -110, 0.6)]
+    assert validate_draft(ok, "P") == []
+    assert "parlay name required" in validate_draft(ok, "   ")
+    # Same player, different stat is fine.
+    ok2 = [_draft_leg("A", "over", 10.0, "passing yards", -110, 0.6),
+           _draft_leg("A", "over", 5.0, "rushing yards", -110, 0.6)]
+    assert validate_draft(ok2, "P") == []
+
+
+def test_low_prob_legs_warn_only():
+    from edge import low_prob_legs, validate_draft
+
+    draft = [_draft_leg("A", "over", 10.0, "passing yards", -110, 0.5),
+             _draft_leg("B", "under", 5.0, "rushing yards", -110, 0.7)]
+    assert [d["player"] for d in low_prob_legs(draft)] == ["A"]
+    # A sub-55% leg warns but does not block the save.
+    assert validate_draft(draft, "P") == []
+
+
+def test_draft_combined_prob_and_odds():
+    draft = [_draft_leg("Mahomes", "over", 200.0, "passing yards",
+                        -197, 0.83),
+             _draft_leg("Kupp", "over", 10.0, "receiving yards",
+                        -420, 0.875),
+             _draft_leg("Horton", "over", 10.0, "receiving yards",
+                        -150, 0.729)]
+    assert abs(combined_prob(draft) - 0.83 * 0.875 * 0.729) < 1e-9
+    assert parlay_odds(draft) == 211
+    draft[0]["fair_prob"] = None
+    assert combined_prob(draft) is None  # unknown prob -> no combined number

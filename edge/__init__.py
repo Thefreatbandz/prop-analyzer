@@ -141,6 +141,9 @@ LABEL_TO_MARKET = {
 }
 
 
+MARKET_TO_LABEL = {v: k for k, v in LABEL_TO_MARKET.items()}
+
+
 def leg_market(leg: dict) -> str:
     """ESPN market key for a leg: stored market first, else label map."""
     market = (leg.get("market") or "").strip()
@@ -211,6 +214,32 @@ def progress_text(leg: dict, prog: dict, game_date: str | None,
     return "no stats yet"
 
 
+def validate_draft(draft: list[dict], name: str) -> list[str]:
+    """Errors blocking a parlay save. Warnings are separate (see
+    low_prob_legs): a sub-55% leg warns but never blocks."""
+    errors = []
+    if len(draft) < 2:
+        errors.append("need at least 2 legs")
+    if not (name or "").strip():
+        errors.append("parlay name required")
+    keys = [((d.get("player") or "").strip().lower(),
+             (d.get("stat") or "").strip().lower()) for d in draft]
+    if len(set(keys)) != len(keys):
+        errors.append("duplicate player+stat on the same parlay")
+    for d in draft:
+        if d.get("price") in (None, 0):
+            errors.append(f"missing odds for {d.get('player', '?')}")
+        if d.get("line") is None:
+            errors.append(f"missing line for {d.get('player', '?')}")
+    return errors
+
+
+def low_prob_legs(draft: list[dict]) -> list[dict]:
+    """Draft legs whose model probability is below 55% — warn, don't block."""
+    return [d for d in draft
+            if d.get("fair_prob") is not None and d["fair_prob"] < 0.55]
+
+
 def learning_summary(db_path: str | None = None) -> dict:
     """Graded-result feedback for the learning loop.
 
@@ -250,8 +279,13 @@ def _fmt_pct(prob: float | None) -> str:
     return f"{prob * 100:.1f}%"
 
 
-def render() -> None:
-    """Streamlit section: The Edge parlay cards + learning loop."""
+def render(scan_picks: list[dict] | None = None) -> None:
+    """Streamlit section: The Edge parlay cards + learning loop.
+
+    scan_picks: this week's ranked scan edges (player, side, line,
+    label, market, book, price, fair_prob, ev_pct) used to prefill
+    the builder. None means no prefill — manual entry still works.
+    """
     import streamlit as st
 
     st.markdown("## The Edge")
@@ -353,6 +387,162 @@ def render() -> None:
                         f"{leg['line']} {leg['stat']}: {txt}"
                     )
         _edge_live()
+
+    # --- Build a parlay (Feature 2) ---
+    st.markdown("## Build a parlay")
+    st.caption(
+        "Pick legs from this week's scan edges or enter them by hand. "
+        "Combined probability and parlay odds update as you add legs. "
+        "Saving logs the legs to the paper tracker — paper-only, "
+        "flat 1-unit paper stakes. Builder tracks NFL player markets."
+    )
+    if "edge_save_msg" in st.session_state:
+        st.success(st.session_state.pop("edge_save_msg"))
+    if "edge_draft" not in st.session_state:
+        st.session_state["edge_draft"] = []
+    draft = st.session_state["edge_draft"]
+
+    if scan_picks:
+        _prefill = {}
+        for _p in scan_picks:
+            _prefill[f"{_p['player']} {_p['side']} {_p['line']:g} "
+                     f"{_p.get('label', _p['market'])} · {_p['book']} "
+                     f"{_fmt_odds(_p['price'])}"] = _p
+        _choice = st.selectbox("Prefill from this week's scan edges",
+                               ["— pick an edge —"] + list(_prefill.keys()),
+                               key="edge_prefill_pick")
+        if st.button("Use this edge", key="edge_prefill_use"):
+            if _choice in _prefill:
+                _p = _prefill[_choice]
+                _stat = MARKET_TO_LABEL.get(_p.get("market", ""),
+                                            _p.get("label", ""))
+                if _stat not in LABEL_TO_MARKET:
+                    _stat = "passing yards"
+                st.session_state["edge_f_player"] = _p["player"]
+                st.session_state["edge_f_side"] = _p["side"]
+                st.session_state["edge_f_line"] = float(_p["line"])
+                st.session_state["edge_f_stat"] = _stat
+                st.session_state["edge_f_book"] = _p["book"]
+                st.session_state["edge_f_odds"] = float(_p["price"])
+                st.session_state["edge_f_prob"] = float(_p["fair_prob"])
+                st.session_state["edge_f_market"] = _p.get("market", "")
+                st.session_state["edge_f_ev"] = _p.get("ev_pct")
+                st.rerun()
+
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        st.text_input("Player", key="edge_f_player")
+        st.selectbox("Side", ["over", "under"], key="edge_f_side")
+        st.number_input("Line", value=None, key="edge_f_line")
+        st.selectbox("Stat", list(LABEL_TO_MARKET.keys()),
+                     key="edge_f_stat")
+    with _c2:
+        st.text_input("Book", key="edge_f_book")
+        st.number_input("Odds (American)", value=None, key="edge_f_odds")
+        st.number_input("Model probability (0–1, optional)", value=None,
+                        min_value=0.0, max_value=1.0, key="edge_f_prob")
+        st.caption("Leave model probability blank if unknown — combined "
+                   "probability shows as — until every leg has one.")
+    if st.button("Add leg", key="edge_add_leg"):
+        _player = (st.session_state.get("edge_f_player") or "").strip()
+        _line = st.session_state.get("edge_f_line")
+        _odds = st.session_state.get("edge_f_odds")
+        _stat = st.session_state.get("edge_f_stat")
+        _add_errors = []
+        if not _player:
+            _add_errors.append("player required")
+        if _line is None or _line <= 0:
+            _add_errors.append("line must be above 0")
+        if _odds is None or _odds == 0:
+            _add_errors.append("odds required (non-zero)")
+        if any((d["player"].lower() == _player.lower()
+                and d["stat"] == _stat) for d in draft):
+            _add_errors.append("duplicate player+stat already on the draft")
+        if _add_errors:
+            st.error(" · ".join(_add_errors))
+        else:
+            draft.append({
+                "player": _player,
+                "side": st.session_state.get("edge_f_side", "over"),
+                "line": float(_line),
+                "stat": _stat,
+                "market": st.session_state.get("edge_f_market") or
+                          LABEL_TO_MARKET.get(_stat, ""),
+                "book": (st.session_state.get("edge_f_book") or "").strip(),
+                "price": float(_odds),
+                "fair_prob": st.session_state.get("edge_f_prob"),
+                "ev_pct": st.session_state.get("edge_f_ev"),
+            })
+            st.session_state["edge_f_market"] = ""
+            st.session_state["edge_f_ev"] = None
+            st.rerun()
+
+    if draft:
+        st.markdown("**Your draft**")
+        for _i, _d in enumerate(draft):
+            _dc1, _dc2 = st.columns([4, 1])
+            _dc1.markdown(
+                f"- **{_d['player']}** {_d['side']} {_d['line']:g} "
+                f"{_d['stat']} · {_d['book']} {_fmt_odds(_d['price'])}"
+                f" · model {_fmt_pct(_d['fair_prob'])}"
+            )
+            if _dc2.button("Remove", key=f"edge_draft_rm_{_i}"):
+                draft.pop(_i)
+                st.rerun()
+        _dprob = combined_prob(draft)
+        _dodds = parlay_odds(draft)
+        st.markdown(f"Combined model probability: {_fmt_pct(_dprob)} · "
+                    f"Parlay odds: {_fmt_odds(_dodds)} · "
+                    f"{len(draft)} legs")
+        _low = low_prob_legs(draft)
+        if _low:
+            st.warning("Heads up — these legs are below 55% model "
+                       "probability: " + ", ".join(
+                           f"{d['player']} {_fmt_pct(d['fair_prob'])}"
+                           for d in _low) + ". Saving still allowed.")
+    else:
+        st.info("No legs yet — pick an edge above or enter one by hand.")
+
+    import datetime as _dt
+    _pname = st.text_input("Parlay name", key="edge_save_name",
+                           placeholder="e.g. SNF 2026-10-25 3-legger")
+    _gdate = st.date_input("Game date", value=_dt.date.today(),
+                           key="edge_save_date")
+    if st.button("Save parlay to tracker", key="edge_save"):
+        _errors = validate_draft(draft, _pname)
+        if _errors:
+            st.error(" · ".join(_errors))
+        else:
+            from tracker import db as _tdb
+            if _tdb.plays_today() + len(draft) > _tdb.MAX_PLAYS_PER_DAY:
+                st.error(
+                    f"Daily paper cap reached: {_tdb.plays_today()} plays "
+                    f"logged in the last 24h, this parlay needs "
+                    f"{len(draft)} more (cap {_tdb.MAX_PLAYS_PER_DAY}). "
+                    f"Try again after older plays age out.")
+            else:
+                _saved = []
+                for _d in draft:
+                    _pick = {
+                        "player": _d["player"], "side": _d["side"],
+                        "line": _d["line"], "label": _d["stat"],
+                        "market": _d["market"], "book": _d["book"],
+                        "price": _d["price"], "fair_prob": _d["fair_prob"],
+                        "ev_pct": _d["ev_pct"], "type": "prop",
+                        "parlay": _pname.strip(),
+                    }
+                    _saved.append(_tdb.log_pick(
+                        _pick, game_date=_gdate.isoformat()))
+                if any(s is None for s in _saved):
+                    st.error("Some legs did not save (daily cap hit "
+                             "mid-save). Check the tracker list above "
+                             "before retrying.")
+                else:
+                    st.session_state["edge_save_msg"] = (
+                        f"Saved '{_pname.strip()}' — {len(_saved)} legs. "
+                        f"It appears in the tracker list above.")
+                    st.session_state["edge_draft"] = []
+                    st.rerun()
 
     st.markdown("## How The Edge Gets Better")
     st.caption(

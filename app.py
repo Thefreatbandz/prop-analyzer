@@ -1659,7 +1659,7 @@ if nav == "Scan":
 # ---------------- The Edge: paper parlay builder + tracker ----------------
 if nav == "The Edge":
     from edge import render as _edge_render
-    _edge_render()
+    _edge_render(prop_picks)
 
 # ---------------- Legal: privacy, terms, about ----------------
 if nav == "Legal":
