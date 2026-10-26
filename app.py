@@ -205,7 +205,7 @@ st.markdown(
 
     /* Dividers + spacing */
     hr { border-color: var(--line); margin: 1.2em 0; }
-    .block-container { padding-top: 1.6rem; max-width: 1100px; }
+    .block-container { padding-top: 1.6rem; max-width: 1600px; }
 
     /* ---- Scan home: pick cards, hero edge, mini form bars ---- */
     .ev-hero { color: #7BC47F; font-size: 2.1em; font-weight: 800;
@@ -340,10 +340,12 @@ st.markdown(
     .neon-sport { color: var(--gold); font-size: 0.78em; font-weight: 700;
                   letter-spacing: 0.08em; }
     .neon-idrow { display: flex; gap: 12px; align-items: center;
-                  margin-bottom: 10px; }
-    .neon-id { flex: 1; min-width: 0; }
-    .neon-name { font-size: 1.12em; font-weight: 800; line-height: 1.2; }
-    .neon-edgebox { text-align: right; flex-shrink: 0; }
+                  flex-wrap: wrap; margin-bottom: 10px; }
+    .neon-id { flex: 1 1 140px; min-width: 0; }
+    .neon-name { font-size: 1.12em; font-weight: 800; line-height: 1.2;
+                 word-break: normal; overflow-wrap: break-word; }
+    .neon-edgebox { text-align: right; flex: 0 1 auto; min-width: 0;
+                    margin-left: auto; }
     .neon-market { color: var(--ink-dim); font-size: 0.92em; margin-top: 2px; }
     .neon-line { color: var(--gold); font-size: 2.0em; font-weight: 800;
                  font-variant-numeric: tabular-nums; line-height: 1.15;
