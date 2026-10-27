@@ -214,6 +214,161 @@ def progress_text(leg: dict, prog: dict, game_date: str | None,
     return "no stats yet"
 
 
+# --- Live slips: PrizePicks/DraftKings/FanDuel-style slip states ---
+# Pure functions (no network, no Streamlit) so tests drive them with
+# fake games. The slip view in render() calls leg_live_detail per leg.
+
+# status -> (display label, text color, .neon-fill bar class)
+LEG_STATUS_DISPLAY = {
+    "won": ("Already won ✓", "#7BC47F", "hit-good"),
+    "lost": ("Already lost ✗", "#C46A6A", "hit-bad"),
+    "winning": ("Winning", "#7BC47F", "hit-good"),
+    "losing": ("Losing", "#E0A030", "hit-mid"),
+    "live": ("Still live", "#9a9aa0", "hit-mid"),
+    "push": ("Push — ready to grade", "#9a9aa0", "hit-na"),
+    "no_data": ("No live data yet", "#9a9aa0", "hit-na"),
+    "untrackable": ("Live tracking unavailable", "#9a9aa0", "hit-na"),
+}
+
+
+def derive_leg_status(side: str, line: float, current: float,
+                      game_status: str) -> str:
+    """One leg's live state from its current stat vs the line.
+
+    Live: an over past its line is clinched (stats only grow), so it
+    is won; an over below its line is losing (needs more, but not
+    decided). An under past its line is busted (lost — the stat
+    cannot come back down); an under below its line is winning
+    (room to spare). Exactly at the line is still live either way.
+    Final: decided outright, or push on an exact tie.
+    """
+    if game_status == "final":
+        if side == "over":
+            return ("won" if current > line else
+                    "lost" if current < line else "push")
+        return ("won" if current < line else
+                "lost" if current > line else "push")
+    if side == "over":
+        if current > line:
+            return "won"
+        if current == line:
+            return "live"
+        return "losing"
+    if current > line:
+        return "lost"
+    if current == line:
+        return "live"
+    return "winning"
+
+
+def leg_live_detail(leg: dict, games: list[dict]) -> dict:
+    """Richer live state for one leg than leg_progress.
+
+    games: [{status ('live'|'final'), detail, boxscore}] — same shape
+    leg_progress takes. Pure function: no network, no Streamlit.
+
+    Returns {status, current, game_status, game_detail,
+    no_category_entry}:
+      - player has a stat in the leg's category -> that stat.
+      - player is in a game's boxscore (any category) but has no
+        entry in the leg's category -> current 0.0 (played but
+        recorded nothing there — a real zero, NOT a void). This is
+        the same rule grading uses; a void only comes from a
+        confirmed inactive/DNP, which live tracking never asserts
+        mid-game.
+      - player in no game's boxscore -> no_data (game not started,
+        or he hasn't recorded anything yet). Never a crash: an
+        empty boxscore dict just yields no_data.
+      - no ESPN market mapping, missing line, or unknown side ->
+        untrackable.
+    """
+    market = leg_market(leg)
+    if (not market or leg.get("line") is None
+            or leg.get("side") not in ("over", "under")):
+        return {"status": "untrackable", "current": None, "game_status": "",
+                "game_detail": "", "no_category_entry": False}
+    from live import espn as _le
+
+    for g in games:
+        bs = g.get("boxscore") or {}
+        val = _le.player_live_stat(bs, leg["player"], market)
+        gs = g.get("status") if g.get("status") in ("live", "final") else "live"
+        if val is not None:
+            return {"status": derive_leg_status(leg["side"], leg["line"],
+                                                val, gs),
+                    "current": val, "game_status": gs,
+                    "game_detail": g.get("detail", ""),
+                    "no_category_entry": False}
+        if _player_in_boxscore(bs, leg["player"]):
+            return {"status": derive_leg_status(leg["side"], leg["line"],
+                                                0.0, gs),
+                    "current": 0.0, "game_status": gs,
+                    "game_detail": g.get("detail", ""),
+                    "no_category_entry": True}
+    return {"status": "no_data", "current": None, "game_status": "",
+            "game_detail": "", "no_category_entry": False}
+
+
+def leg_progress_fraction(line: float | None, current: float | None) -> float | None:
+    """0.0–1.0 closeness of the current stat to the line for the slip
+    progress bar. Capped at 1.0 (a clinched or busted leg is full).
+    None when the stat or line is unknown — the bar is omitted."""
+    if current is None or line is None:
+        return None
+    try:
+        frac = float(current) / float(line)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return max(0.0, min(1.0, frac))
+
+
+def parlay_live_state(statuses: list[str]) -> str:
+    """Slip-level live state from leg statuses.
+
+    Any lost leg kills the slip (DEAD) — the other legs may still be
+    live, but the parlay cannot win. All legs won (or won/push, since
+    a push voids rather than losing) is WON; all push is VOID.
+    Anything still live, winning, or losing is ALIVE.
+    """
+    if not statuses:
+        return "ALIVE"
+    if any(s == "lost" for s in statuses):
+        return "DEAD"
+    if all(s in ("won", "push") for s in statuses):
+        return "WON" if any(s == "won" for s in statuses) else "VOID"
+    return "ALIVE"
+
+
+def leg_live_text(leg: dict, detail: dict) -> str:
+    """Human line for a leg's live-slip row.
+
+    Same honesty rules as progress_text: overs clinch mid-game,
+    unders can only clinch at final, and a final leg reports as
+    ready to grade (grading stays the Grade-now button's job).
+    """
+    status, cur = detail["status"], detail["current"]
+    line, stat = leg["line"], leg["stat"]
+    if status == "untrackable":
+        return "live tracking unavailable for this stat"
+    if status == "no_data":
+        return "no stats yet"
+    suffix = (" (played, no entry in this category yet)"
+              if detail.get("no_category_entry") else "")
+    if detail.get("game_status") == "final":
+        return (f"final: {cur:g} / {line:g} {stat} — {status}, "
+                f"ready to grade{suffix}")
+    if status == "won":
+        return f"HIT — {cur:g} / {line:g} {stat} ✓{suffix}"
+    if status == "lost":
+        return (f"{cur:g} / {line:g} {stat} — line already covered, "
+                f"leg lost{suffix}")
+    if status == "winning":
+        return f"{cur:g} / {line:g} {stat} — {line - cur:g} to spare{suffix}"
+    if status == "losing":
+        return f"{cur:g} / {line:g} {stat} — needs {line - cur:g} more{suffix}"
+    return f"at the line — {cur:g} / {line:g} {stat}{suffix}"
+
+
 def validate_draft(draft: list[dict], name: str) -> list[str]:
     """Errors blocking a parlay save. Warnings are separate (see
     low_prob_legs): a sub-55% leg warns but never blocks."""
@@ -517,18 +672,25 @@ def render(scan_picks: list[dict] | None = None) -> None:
                 + f" · {result}"
             )
 
-    # --- Live leg tracking (Feature 1) ---
+    # --- Live slips: PrizePicks/DraftKings/FanDuel-style slip view ---
+    # Same data path as before (ESPN scoreboard + structured boxscores
+    # via live/espn.py, 60s fragment refresh) — only the presentation
+    # changed: each pending parlay is a slip card with a live ALIVE /
+    # DEAD / WON state and per-leg green/red rows + progress bars.
     pending = [p for p in parlays if parlay_status(p) == "PENDING"]
-    pending_legs = [leg for p in pending for leg in p["legs"]
-                    if leg["result"] is None]
-    if pending_legs:
-        st.markdown("## Live leg tracking")
+    if pending:
+        st.markdown("## Live slips")
         st.caption(
-            "Refreshes every minute while games are live. Stats come "
-            "from ESPN's free public box scores — text stats only, "
-            "not Next Gen Stats tracking (no routes, speed, or "
-            "separation). Over legs clinch mid-game; under legs can "
-            "only clinch at final."
+            "Your pending parlays, live — the way PrizePicks, "
+            "DraftKings, and FanDuel show a slip going green/red "
+            "during the game. Refreshes every minute while games "
+            "are live. Stats come from ESPN's free public box "
+            "scores — text stats only, not Next Gen Stats tracking "
+            "(no routes, speed, or separation). Over legs clinch "
+            "mid-game; under legs can only clinch at final. A "
+            "player who is in the boxscore but has no entry in a "
+            "leg's category counts as 0 for that stat, not a void "
+            "— only a confirmed inactive/DNP voids, at grading."
         )
 
         @st.fragment(run_every=60)
@@ -556,21 +718,96 @@ def render(scan_picks: list[dict] | None = None) -> None:
                 games.append({"status": g["status"],
                               "detail": g.get("detail", ""),
                               "boxscore": bs})
+            if not games:
+                st.caption("No live or final games on the board right "
+                           "now — slips light up when their games start.")
+                return
             today = _dt.date.today().isoformat()
             for parlay in pending:
-                legs = [l for l in parlay["legs"]
-                        if l["result"] is None]
-                if not legs:
-                    continue
-                st.markdown(f"**{parlay['name']}**")
+                legs = parlay["legs"]
+                prob = combined_prob(legs)
+                odds = parlay_odds(legs)
+                rows = []
                 for leg in legs:
-                    prog = leg_progress(leg, games)
-                    txt = progress_text(leg, prog, parlay["game_date"],
-                                        today)
-                    st.markdown(
-                        f"- **{leg['player']}** {leg['side']} "
-                        f"{leg['line']} {leg['stat']}: {txt}"
+                    if leg["result"] is not None:
+                        _gmap = {"win": "won", "loss": "lost",
+                                 "push": "push"}
+                        rows.append({"leg": leg,
+                                     "status": _gmap.get(leg["result"],
+                                                         "live"),
+                                     "current": None, "detail": "",
+                                     "graded": True, "det": None})
+                    else:
+                        det = leg_live_detail(leg, games)
+                        rows.append({"leg": leg, "status": det["status"],
+                                     "current": det["current"],
+                                     "detail": det["game_detail"],
+                                     "graded": False, "det": det})
+                state = parlay_live_state([r["status"] for r in rows])
+                _scolor = {"ALIVE": "#C9A227", "DEAD": "#C46A6A",
+                           "WON": "#7BC47F", "VOID": "#9a9aa0"}[state]
+                _gdetail = next((r["detail"] for r in rows if r["detail"]),
+                                "")
+                _sub = (f"Combined {_fmt_pct(prob)} · "
+                        f"Pays {_fmt_odds(odds)} · {len(legs)} legs")
+                if parlay["game_date"]:
+                    _sub += f" · {parlay['game_date']}"
+                if _gdetail:
+                    _sub += f" · {_gdetail}"
+                _html = [
+                    "<div class='pick-card'>",
+                    "<div style='display:flex;justify-content:space-between;"
+                    "align-items:baseline;gap:12px;'>"
+                    f"<b>{parlay['name']}</b>"
+                    f"<span style='color:{_scolor};font-weight:800;'>"
+                    f"● {state}</span></div>",
+                    f"<div style='color:var(--ink-dim);font-size:0.88em;"
+                    f"margin:2px 0 10px;'>{_sub}</div>",
+                ]
+                for r in rows:
+                    leg = r["leg"]
+                    label, color, fill = LEG_STATUS_DISPLAY[r["status"]]
+                    _line = (f"{leg['line']:g}"
+                             if leg["line"] is not None else "—")
+                    if r["graded"]:
+                        _txt = f"Graded: {leg['result']}"
+                        _bar = ""
+                    elif r["status"] == "no_data":
+                        if (parlay["game_date"]
+                                and parlay["game_date"] > today):
+                            _txt = "Not started"
+                        else:
+                            _txt = "No live data yet"
+                        _bar = ""
+                    elif r["status"] == "untrackable":
+                        _txt = ("Live tracking unavailable for this "
+                                "stat")
+                        _bar = ""
+                    else:
+                        _txt = leg_live_text(leg, r["det"])
+                        _frac = leg_progress_fraction(leg["line"],
+                                                       r["current"])
+                        _bar = (
+                            "<div class='neon-track' "
+                            "style='margin-top:6px;'><div "
+                            f"class='neon-fill {fill}' "
+                            f"style='width:{_frac * 100:.0f}%'></div>"
+                            "</div>"
+                        ) if _frac is not None else ""
+                    _html.append(
+                        "<div style='margin-top:10px;'>"
+                        "<div style='display:flex;justify-content:"
+                        "space-between;gap:8px;'>"
+                        f"<span><b>{leg['player']}</b> {leg['side']} "
+                        f"{_line} {leg['stat']} · {leg['book']} "
+                        f"{_fmt_odds(leg['price'])}</span>"
+                        f"<span style='color:{color};font-weight:700;"
+                        f"white-space:nowrap;'>{label}</span></div>"
+                        f"<div style='color:var(--ink-dim);"
+                        f"font-size:0.88em;'>{_txt}</div>{_bar}</div>"
                     )
+                _html.append("</div>")
+                st.markdown("".join(_html), unsafe_allow_html=True)
         _edge_live()
 
     # --- Build a parlay (Feature 2) ---
